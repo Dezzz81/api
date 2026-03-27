@@ -313,6 +313,13 @@ def _payment_is_paid(status: str) -> bool:
     return normalized in {"paid", "success", "ok", "confirmed"}
 
 
+def _render_template(request: Request, name: str, context: Dict[str, Any]) -> HTMLResponse:
+    payload = dict(context)
+    payload["request"] = request
+    template = templates.get_template(name)
+    return HTMLResponse(template.render(payload))
+
+
 def _build_vless_link(
     *,
     client_id: str,
@@ -592,10 +599,10 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)) 
     total_paid = (await db.execute(select(func.count(Subscription.id)).where(Subscription.is_paid.is_(True)))).scalar() or 0
 
     servers = _get_panel_servers()
-    return templates.TemplateResponse(
+    return _render_template(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "cpu": cpu,
             "mem": mem,
             "disk": disk,
@@ -610,10 +617,10 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)) 
 async def admin_clients(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
     result = await db.execute(select(Client).order_by(desc(Client.id)).limit(500))
     clients = result.scalars().all()
-    return templates.TemplateResponse(
+    return _render_template(
+        request,
         "clients.html",
         {
-            "request": request,
             "clients": clients,
         },
     )
@@ -644,10 +651,10 @@ async def admin_servers(request: Request) -> HTMLResponse:
         }
 
     results = await asyncio.gather(*[fetch_server(server) for server in servers])
-    return templates.TemplateResponse(
+    return _render_template(
+        request,
         "servers.html",
         {
-            "request": request,
             "servers": results,
         },
     )
@@ -658,10 +665,10 @@ async def admin_payments(request: Request, db: AsyncSession = Depends(get_db)) -
     payments = (await db.execute(select(PaymentEvent).order_by(desc(PaymentEvent.id)).limit(500))).scalars().all()
     subs = (await db.execute(select(Subscription))).scalars().all()
     subs_map = {sub.tg_id: sub for sub in subs}
-    return templates.TemplateResponse(
+    return _render_template(
+        request,
         "payments.html",
         {
-            "request": request,
             "payments": payments,
             "subs_map": subs_map,
         },
