@@ -313,9 +313,16 @@ def _payment_is_paid(status: str) -> bool:
     return normalized in {"paid", "success", "ok", "confirmed"}
 
 
-def _render_template(request: Request, name: str, context: Dict[str, Any]) -> HTMLResponse:
-    payload = dict(context)
-    payload["request"] = request
+def _render_template(request: Request | str, name: str | Dict[str, Any], context: Dict[str, Any] | None = None) -> HTMLResponse:
+    # Backward-compatible call style:
+    # _render_template("template.html", {"request": request, ...})
+    if context is None and isinstance(request, str) and isinstance(name, dict):
+        context = name
+        name = request
+        request = context.get("request")
+    payload = dict(context or {})
+    if "request" not in payload and request is not None:
+        payload["request"] = request
     template = templates.get_template(name)
     return HTMLResponse(template.render(payload))
 
