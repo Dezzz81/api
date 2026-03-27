@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set title = "Servers SSH" %}
+{% set page_title = "Установка через SSH" %}
+{% set active = "servers" %}
+
+{% block content %}
+  <h2 class="section-title">Установка 3x-ui на сервер</h2>
+  <div class="card">
+    <div class="muted" style="margin-bottom:10px;">Пример:</div>
+    <pre style="white-space:pre-wrap; margin:0;">
+ssh root@SERVER_IP
+bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+    </pre>
+    <div class="muted" style="margin-top:10px;">После установки добавьте параметры в PANEL_SERVERS_JSON или PANEL_*.</div>
+  </div>
+{% endblock %}

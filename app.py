@@ -159,7 +159,7 @@ def _load_panel_servers() -> List[PanelServer]:
             inbound_id = _as_int(str(item.get("inbound_id") or _env("INBOUND_ID", "0")), 0)
             vless_host = str(item.get("vless_host") or _env("VLESS_HOST") or host)
             if inbound_id <= 0:
-                raise RuntimeError(f"INBOUND_ID is not set for server {server_id}")
+                inbound_id = 0
             servers.append(
                 PanelServer(
                     id=server_id,
@@ -179,10 +179,14 @@ def _load_panel_servers() -> List[PanelServer]:
         if servers:
             return servers
 
+    # If no single server config provided, allow empty list (admin UI still works).
+    if not _env("PANEL_HOST", ""):
+        return []
+
     # Fallback to single server config
     inbound_id = _as_int(_env("INBOUND_ID", "0"), 0)
     if inbound_id <= 0:
-        raise RuntimeError("INBOUND_ID is not set")
+        inbound_id = 0
     return [
         PanelServer(
             id="default",
@@ -210,6 +214,8 @@ def _get_panel_servers() -> List[PanelServer]:
 
 def _get_panel_server(server_id: Optional[str]) -> PanelServer:
     servers = _get_panel_servers()
+    if not servers:
+        raise HTTPException(status_code=500, detail="No 3x-ui servers configured")
     if not server_id:
         return servers[0]
     for server in servers:
@@ -313,6 +319,14 @@ def _payment_is_paid(status: str) -> bool:
     return normalized in {"paid", "success", "ok", "confirmed"}
 
 
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 4:
+        return "*" * len(value)
+    return value[:2] + "*" * (len(value) - 4) + value[-2:]
+
+
 def _render_template(request: Request | str, name: str | Dict[str, Any], context: Dict[str, Any] | None = None) -> HTMLResponse:
     # Backward-compatible call style:
     # _render_template("template.html", {"request": request, ...})
@@ -410,6 +424,8 @@ async def create_client(
     _check_auth(authorization, x_api_token)
 
     server = _get_panel_server(payload.server_id)
+    if server.inbound_id <= 0:
+        raise HTTPException(status_code=500, detail="INBOUND_ID is not set")
     inbound_id = server.inbound_id
     verify_tls = server.verify_tls
     timeout = _as_float(_env("REQUEST_TIMEOUT", "10"), 10.0)
@@ -639,31 +655,112 @@ async def admin_servers(request: Request) -> HTMLResponse:
     timeout = _as_float(_env("REQUEST_TIMEOUT", "10"), 10.0)
 
     async def fetch_server(server: PanelServer) -> Dict[str, Any]:
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            verify=server.verify_tls,
-            follow_redirects=True,
-        ) as client:
-            await _xui_login(client, server)
-            inbounds = await _xui_list_inbounds(client, server)
-            onlines = await _xui_get_onlines(client, server)
-        return {
-            "id": server.id,
-            "name": server.name,
-            "host": server.host,
-            "port": server.port,
-            "inbounds": inbounds,
-            "onlines": onlines,
-            "onlines_count": len(onlines),
-        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                verify=server.verify_tls,
+                follow_redirects=True,
+            ) as client:
+                await _xui_login(client, server)
+                inbounds = await _xui_list_inbounds(client, server)
+                onlines = await _xui_get_onlines(client, server)
+            return {
+                "id": server.id,
+                "name": server.name,
+                "host": server.host,
+                "port": server.port,
+                "panel_url": server.base_url,
+                "inbounds": inbounds,
+                "onlines": onlines,
+                "onlines_count": len(onlines),
+                "ok": True,
+                "error": None,
+            }
+        except Exception as exc:
+            return {
+                "id": server.id,
+                "name": server.name,
+                "host": server.host,
+                "port": server.port,
+                "panel_url": server.base_url,
+                "inbounds": [],
+                "onlines": [],
+                "onlines_count": 0,
+                "ok": False,
+                "error": str(exc),
+            }
 
-    results = await asyncio.gather(*[fetch_server(server) for server in servers])
+    results: List[Dict[str, Any]] = []
+    if servers:
+        results = await asyncio.gather(*[fetch_server(server) for server in servers])
+
+    total_servers = len(results)
+    active_servers = sum(1 for item in results if item.get("ok"))
+    online_total = sum(int(item.get("onlines_count", 0) or 0) for item in results)
+
     return _render_template(
         request,
         "servers.html",
         {
             "servers": results,
+            "total_servers": total_servers,
+            "active_servers": active_servers,
+            "online_total": online_total,
+            "servers_configured": len(servers) > 0,
         },
+    )
+
+
+@app.get("/admin/servers/config", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
+async def admin_servers_config(request: Request) -> HTMLResponse:
+    servers = _get_panel_servers()
+    safe_servers = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "scheme": s.scheme,
+            "host": s.host,
+            "port": s.port,
+            "base_path": s.base_path,
+            "username": s.username,
+            "password": _mask_secret(s.password),
+            "verify_tls": s.verify_tls,
+            "inbound_id": s.inbound_id,
+            "vless_host": s.vless_host,
+        }
+        for s in servers
+    ]
+    example = [
+        {
+            "id": "srv1",
+            "name": "Main",
+            "scheme": "https",
+            "host": "panel.example.com",
+            "port": 2053,
+            "base_path": "/random",
+            "username": "admin",
+            "password": "pass",
+            "verify_tls": True,
+            "inbound_id": 1,
+            "vless_host": "vpn.example.com",
+        }
+    ]
+    return _render_template(
+        request,
+        "servers_config.html",
+        {
+            "servers": safe_servers,
+            "example": json.dumps(example, indent=2, ensure_ascii=False),
+        },
+    )
+
+
+@app.get("/admin/servers/ssh", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
+async def admin_servers_ssh(request: Request) -> HTMLResponse:
+    return _render_template(
+        request,
+        "servers_ssh.html",
+        {},
     )
 
 

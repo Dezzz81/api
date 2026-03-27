@@ -4,45 +4,98 @@
 {% set active = "servers" %}
 
 {% block content %}
-  <h2 class="section-title">3x-ui Серверы</h2>
-  {% for s in servers %}
-    <div class="card" style="margin-bottom:16px;">
-      <div class="stat-head">
-        <div>
-          <strong>{{ s.name }}</strong>
-          <span class="muted">({{ s.id }})</span>
-        </div>
-        <span class="badge">{{ s.host }}:{{ s.port }}</span>
-      </div>
-      <div class="muted" style="margin-bottom:12px;">Online clients: {{ s.onlines_count }}</div>
-      <table>
-        <thead>
-          <tr>
-            <th>Inbound ID</th>
-            <th>Port</th>
-            <th>Protocol</th>
-            <th>Remark</th>
-            <th>Up</th>
-            <th>Down</th>
-            <th>Total</th>
-            <th>Enable</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for ib in s.inbounds %}
-          <tr>
-            <td>{{ ib.id }}</td>
-            <td>{{ ib.port }}</td>
-            <td>{{ ib.protocol }}</td>
-            <td>{{ ib.remark }}</td>
-            <td>{{ ib.up }}</td>
-            <td>{{ ib.down }}</td>
-            <td>{{ ib.total }}</td>
-            <td>{{ ib.enable }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <div class="banner">
+    <div class="banner-title">3X-UI</div>
+    <div class="banner-subtitle">Мониторинг и управление всеми серверами 3x-ui</div>
+    <div class="button-row">
+      <a class="btn secondary" href="/admin/servers/config">Редактировать JSON</a>
+      <a class="btn secondary" href="/admin/servers/ssh">Установить через SSH</a>
+      <a class="btn" href="/admin/servers/config">Добавить сервер</a>
     </div>
-  {% endfor %}
+  </div>
+
+  <div class="grid" style="margin-bottom:18px;">
+    <div class="card">
+      <div class="stat-head">
+        <div class="stat-icon blue">T</div>
+        <div class="muted">Всего серверов</div>
+      </div>
+      <div class="stat-value">{{ total_servers }}</div>
+    </div>
+    <div class="card">
+      <div class="stat-head">
+        <div class="stat-icon green">A</div>
+        <div class="muted">Активны</div>
+      </div>
+      <div class="stat-value">{{ active_servers }}</div>
+    </div>
+    <div class="card">
+      <div class="stat-head">
+        <div class="stat-icon purple">O</div>
+        <div class="muted">Онлайн пользователей</div>
+      </div>
+      <div class="stat-value">{{ online_total }}</div>
+    </div>
+  </div>
+
+  {% if not servers_configured %}
+    <div class="empty-state">Серверы не настроены. Добавьте их через `PANEL_SERVERS_JSON` или одиночные `PANEL_*` параметры.</div>
+  {% endif %}
+
+  <div class="server-grid">
+    {% for s in servers %}
+      <div class="server-card">
+        <div class="stat-head">
+          <div>
+            <strong>{{ s.name }}</strong>
+            <span class="muted">({{ s.id }})</span>
+          </div>
+          <span class="badge">{{ s.host }}:{{ s.port }}</span>
+        </div>
+        <div class="muted" style="margin-bottom:10px;">
+          <span class="status {{ 'ok' if s.ok else 'err' }}">{{ "Работает" if s.ok else "Ошибка" }}</span>
+          <span style="margin-left:8px;">Онлайн: {{ s.onlines_count }}</span>
+        </div>
+        {% if not s.ok %}
+          <div class="muted" style="font-size:12px;">Ошибка подключения.</div>
+          <details style="margin-top:8px;">
+            <summary class="muted" style="cursor:pointer;">Показать детали</summary>
+            <div class="muted" style="font-size:12px;">{{ s.error }}</div>
+          </details>
+        {% else %}
+          <table>
+            <thead>
+              <tr>
+                <th>Inbound ID</th>
+                <th>Port</th>
+                <th>Protocol</th>
+                <th>Remark</th>
+                <th>Up</th>
+                <th>Down</th>
+                <th>Total</th>
+                <th>Enable</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ib in s.inbounds %}
+              <tr>
+                <td>{{ ib.id }}</td>
+                <td>{{ ib.port }}</td>
+                <td>{{ ib.protocol }}</td>
+                <td>{{ ib.remark }}</td>
+                <td>{{ ib.up }}</td>
+                <td>{{ ib.down }}</td>
+                <td>{{ ib.total }}</td>
+                <td>{{ ib.enable }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div style="margin-top:10px;">
+            <a class="btn secondary" href="{{ s.panel_url }}" target="_blank">Перейти в панель</a>
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
 {% endblock %}

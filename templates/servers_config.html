@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% set title = "Servers Config" %}
+{% set page_title = "Конфигурация серверов" %}
+{% set active = "servers" %}
+
+{% block content %}
+  <h2 class="section-title">PANEL_SERVERS_JSON</h2>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="muted" style="margin-bottom:10px;">Пример:</div>
+    <pre style="white-space:pre-wrap; margin:0;">{{ example }}</pre>
+  </div>
+
+  <h2 class="section-title">Текущие сервера (пароль скрыт)</h2>
+  {% if servers | length == 0 %}
+    <div class="empty-state">Серверы не настроены.</div>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Host</th>
+          <th>Port</th>
+          <th>Base Path</th>
+          <th>User</th>
+          <th>Password</th>
+          <th>Inbound</th>
+          <th>VLESS Host</th>
+          <th>TLS</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in servers %}
+        <tr>
+          <td>{{ s.id }}</td>
+          <td>{{ s.name }}</td>
+          <td>{{ s.host }}</td>
+          <td>{{ s.port }}</td>
+          <td>{{ s.base_path }}</td>
+          <td>{{ s.username }}</td>
+          <td>{{ s.password }}</td>
+          <td>{{ s.inbound_id }}</td>
+          <td>{{ s.vless_host }}</td>
+          <td>{{ s.verify_tls }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}
