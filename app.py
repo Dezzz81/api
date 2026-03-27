@@ -32,6 +32,11 @@ except Exception:
     # dotenv is optional; environment variables can be provided by the runtime
     pass
 
+try:
+    import paramiko
+except Exception:  # pragma: no cover
+    paramiko = None
+
 app = FastAPI(title="3x-ui API Bridge")
 templates = Jinja2Templates(directory="templates")
 security = HTTPBasic()
@@ -62,6 +67,16 @@ class PaymentUpdateRequest(BaseModel):
     amount: Optional[int] = None
     currency: Optional[str] = None
     provider: Optional[str] = None
+
+
+class SshInstallRequest(BaseModel):
+    host: str
+    port: int = 22
+    username: str = "root"
+    password: str
+    inbound_type: str = "vless_reality_tcp"
+    ssl_type: str = "ip_cert"
+    server_name: Optional[str] = None
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -104,6 +119,7 @@ class PanelServer:
 
 
 _PANEL_SERVERS: List[PanelServer] | None = None
+_INSTALL_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 def _as_bool(value: Optional[str], default: bool) -> bool:
@@ -325,6 +341,68 @@ def _mask_secret(value: str) -> str:
     if len(value) <= 4:
         return "*" * len(value)
     return value[:2] + "*" * (len(value) - 4) + value[-2:]
+
+
+def _job_log(job_id: str, message: str) -> None:
+    job = _INSTALL_JOBS.get(job_id)
+    if not job:
+        return
+    job["log"].append(message)
+    if len(job["log"]) > 500:
+        job["log"] = job["log"][-500:]
+
+
+def _run_ssh_install(job_id: str, payload: SshInstallRequest) -> None:
+    if paramiko is None:
+        _INSTALL_JOBS[job_id]["status"] = "error"
+        _INSTALL_JOBS[job_id]["error"] = "paramiko is not installed"
+        return
+
+    job = _INSTALL_JOBS[job_id]
+    job["status"] = "running"
+    job["started_at"] = time.time()
+
+    try:
+        _job_log(job_id, f"Connecting to {payload.host}:{payload.port} as {payload.username}...")
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            hostname=payload.host,
+            port=payload.port,
+            username=payload.username,
+            password=payload.password,
+            timeout=15,
+            banner_timeout=15,
+            auth_timeout=15,
+        )
+        _job_log(job_id, "Connected. Starting 3x-ui installation...")
+
+        install_cmd = "bash -lc \"curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh | bash\""
+        stdin, stdout, stderr = client.exec_command(install_cmd, get_pty=True)
+
+        for line in iter(stdout.readline, ""):
+            if line:
+                _job_log(job_id, line.rstrip())
+        for line in iter(stderr.readline, ""):
+            if line:
+                _job_log(job_id, line.rstrip())
+
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            job["status"] = "error"
+            job["error"] = f"Installer exited with status {exit_status}"
+            _job_log(job_id, job["error"])
+        else:
+            job["status"] = "success"
+            _job_log(job_id, "Install completed.")
+
+        client.close()
+    except Exception as exc:
+        job["status"] = "error"
+        job["error"] = str(exc)
+        _job_log(job_id, f"Error: {exc}")
+    finally:
+        job["finished_at"] = time.time()
 
 
 def _render_template(request: Request | str, name: str | Dict[str, Any], context: Dict[str, Any] | None = None) -> HTMLResponse:
@@ -762,6 +840,53 @@ async def admin_servers_ssh(request: Request) -> HTMLResponse:
         "servers_ssh.html",
         {},
     )
+
+
+@app.post("/admin/servers/ssh/install", dependencies=[Depends(_admin_auth)])
+async def admin_servers_ssh_install(payload: SshInstallRequest) -> Dict[str, Any]:
+    job_id = uuid.uuid4().hex
+    _INSTALL_JOBS[job_id] = {
+        "id": job_id,
+        "status": "queued",
+        "log": [],
+        "error": None,
+        "created_at": time.time(),
+        "started_at": None,
+        "finished_at": None,
+        "host": payload.host,
+        "port": payload.port,
+        "username": payload.username,
+        "inbound_type": payload.inbound_type,
+        "ssl_type": payload.ssl_type,
+        "server_name": payload.server_name or payload.host,
+    }
+    asyncio.create_task(asyncio.to_thread(_run_ssh_install, job_id, payload))
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/admin/servers/ssh/status/{job_id}", dependencies=[Depends(_admin_auth)])
+async def admin_servers_ssh_status(job_id: str) -> Dict[str, Any]:
+    job = _INSTALL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "ok": True,
+        "job": {
+            "id": job["id"],
+            "status": job["status"],
+            "log": job["log"],
+            "error": job["error"],
+            "created_at": job["created_at"],
+            "started_at": job["started_at"],
+            "finished_at": job["finished_at"],
+            "host": job["host"],
+            "port": job["port"],
+            "username": job["username"],
+            "inbound_type": job["inbound_type"],
+            "ssl_type": job["ssl_type"],
+            "server_name": job["server_name"],
+        },
+    }
 
 
 @app.get("/admin/payments", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])

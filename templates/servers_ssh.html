@@ -4,13 +4,131 @@
 {% set active = "servers" %}
 
 {% block content %}
-  <h2 class="section-title">Установка 3x-ui на сервер</h2>
-  <div class="card">
-    <div class="muted" style="margin-bottom:10px;">Пример:</div>
-    <pre style="white-space:pre-wrap; margin:0;">
-ssh root@SERVER_IP
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-    </pre>
-    <div class="muted" style="margin-top:10px;">После установки добавьте параметры в PANEL_SERVERS_JSON или PANEL_*.</div>
+  <h2 class="section-title">Установка 3X-UI через SSH</h2>
+  <div class="form-card">
+    <div class="alert">
+      Внимание: корректность установки зависит от изменений скрипта 3X-UI и может работать некорректно.
+      Функционал предназначен для тестирования и отладки.
+    </div>
+
+    <form id="ssh-install-form">
+      <div class="form-field">
+        <label>IP адрес сервера *</label>
+        <input name="host" placeholder="1.2.3.4" required />
+        <div class="help">IP адрес или доменное имя сервера</div>
+      </div>
+
+      <div class="form-field">
+        <label>SSH порт</label>
+        <input name="port" type="number" value="22" />
+      </div>
+
+      <div class="form-field">
+        <label>SSH пользователь</label>
+        <input name="username" value="root" />
+      </div>
+
+      <div class="form-field">
+        <label>SSH пароль *</label>
+        <input name="password" type="password" placeholder="Введите пароль" required />
+        <div class="help">Пароль не сохраняется, используется только для установки</div>
+      </div>
+
+      <div class="form-field">
+        <label>Тип инбаунда</label>
+        <select name="inbound_type">
+          <option value="vless_reality_tcp">VLESS + Reality (TCP)</option>
+          <option value="vless_reality_grpc">VLESS + Reality (gRPC)</option>
+          <option value="vless_reality_ws">VLESS + Reality (WS)</option>
+        </select>
+        <div class="help">Будет создан базовый инбаунд выбранного типа</div>
+      </div>
+
+      <div class="form-field">
+        <label>Тип SSL сертификата</label>
+        <select name="ssl_type">
+          <option value="ip_cert">IP сертификат (6 дней, автообновление)</option>
+          <option value="domain_cert">Доменный сертификат</option>
+          <option value="none">Без сертификата</option>
+        </select>
+      </div>
+
+      <div class="form-field">
+        <label>Название сервера</label>
+        <input name="server_name" placeholder="Автоматически (по IP)" />
+        <div class="help">Если не указано, будет использован IP адрес</div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn secondary" href="/admin/servers">Отмена</a>
+        <button class="btn primary" type="submit">Начать установку</button>
+      </div>
+    </form>
+
+    <div id="install-status" class="help" style="margin-top:12px;"></div>
+    <div id="install-log" class="log-box" style="display:none;"></div>
   </div>
+
+  <script>
+    const form = document.getElementById("ssh-install-form");
+    const statusBox = document.getElementById("install-status");
+    const logBox = document.getElementById("install-log");
+    let pollTimer = null;
+
+    function setStatus(text) {
+      statusBox.textContent = text;
+    }
+
+    function setLog(lines) {
+      logBox.style.display = "block";
+      logBox.textContent = lines.join("\n");
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    async function poll(jobId) {
+      const res = await fetch(`/admin/servers/ssh/status/${jobId}`, { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const job = data.job;
+      setLog(job.log || []);
+      if (job.status === "success") {
+        setStatus("Установка завершена.");
+        clearInterval(pollTimer);
+      }
+      if (job.status === "error") {
+        setStatus("Ошибка установки: " + (job.error || "unknown"));
+        clearInterval(pollTimer);
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+      const payload = {
+        host: formData.get("host"),
+        port: Number(formData.get("port") || 22),
+        username: formData.get("username") || "root",
+        password: formData.get("password"),
+        inbound_type: formData.get("inbound_type"),
+        ssl_type: formData.get("ssl_type"),
+        server_name: formData.get("server_name") || null,
+      };
+      setStatus("Запуск установки...");
+      logBox.style.display = "none";
+
+      const res = await fetch("/admin/servers/ssh/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        setStatus("Ошибка запуска установки.");
+        return;
+      }
+      const data = await res.json();
+      setStatus("Установка запущена, ожидаем лог...");
+      pollTimer = setInterval(() => poll(data.job_id), 2000);
+    });
+  </script>
 {% endblock %}
