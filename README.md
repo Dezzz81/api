@@ -2,9 +2,17 @@
 
 ## Quick Install (Windows)
 ```powershell
-git clone https://github.com/<user>/<repo>.git
-cd <repo>
+git clone https://github.com/Dezzz81/api.git
+cd api
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Autostart
+```
+
+## Quick Install (Linux)
+```bash
+git clone https://github.com/Dezzz81/api.git
+cd api
+chmod +x install.sh
+sudo ./install.sh --autostart
 ```
 
 ## Configure
@@ -19,6 +27,10 @@ If you use multiple 3x-ui servers, fill `PANEL_SERVERS_JSON`.
 ## Run
 ```powershell
 .\start.bat
+```
+
+```bash
+./start.sh
 ```
 
 ## Admin
