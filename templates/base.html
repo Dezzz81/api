@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title or "3x-ui Admin" }}</title>
+    <style>
+      :root {
+        --bg: #0d1018;
+        --panel: #151a25;
+        --panel-soft: #101521;
+        --text: #e6e8ee;
+        --muted: #9aa3b2;
+        --accent: #6f74ff;
+        --accent-2: #4cc3ff;
+        --border: rgba(111, 116, 255, 0.25);
+        --glow: 0 0 0 1px rgba(111, 116, 255, 0.25), 0 20px 40px rgba(8, 10, 16, 0.55);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 600px at 20% 0%, rgba(111, 116, 255, 0.15), transparent 55%),
+          radial-gradient(900px 500px at 90% 10%, rgba(76, 195, 255, 0.12), transparent 60%),
+          linear-gradient(180deg, #0b0e16, #101522 60%, #0d1018);
+        min-height: 100vh;
+      }
+      .app {
+        display: flex;
+        min-height: 100vh;
+      }
+      .sidebar {
+        width: 260px;
+        background: rgba(14, 18, 27, 0.85);
+        border-right: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 20px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .brand-badge {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--accent), #8b5cff);
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #fff;
+      }
+      .menu {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .menu a {
+        color: var(--text);
+        text-decoration: none;
+        padding: 10px 12px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: transparent;
+        transition: all 0.2s ease;
+      }
+      .menu a:hover {
+        background: rgba(111, 116, 255, 0.12);
+      }
+      .menu a.active {
+        background: linear-gradient(90deg, rgba(111, 116, 255, 0.25), rgba(111, 116, 255, 0.05));
+        box-shadow: inset 0 0 0 1px rgba(111, 116, 255, 0.35);
+      }
+      .menu .icon {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.07);
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        color: #cbd5f5;
+      }
+      .sidebar-footer {
+        margin-top: auto;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .content {
+        flex: 1;
+        padding: 24px 32px 40px;
+      }
+      .topbar {
+        background: linear-gradient(90deg, rgba(111, 116, 255, 0.85), rgba(111, 116, 255, 0.55));
+        border-radius: 16px;
+        padding: 16px 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-shadow: 0 10px 30px rgba(57, 61, 128, 0.35);
+        margin-bottom: 24px;
+      }
+      .topbar-title {
+        font-size: 20px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .topbar-title .home {
+        width: 28px;
+        height: 28px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.2);
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+      }
+      .section-title {
+        margin: 0 0 14px 0;
+        font-size: 16px;
+        color: var(--text);
+      }
+      .grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+      .card {
+        background: linear-gradient(180deg, rgba(20, 24, 35, 0.96), rgba(14, 18, 28, 0.96));
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: var(--glow);
+        border: 1px solid rgba(111, 116, 255, 0.18);
+      }
+      .stat-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .stat-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #fff;
+      }
+      .stat-icon.blue { background: rgba(76, 195, 255, 0.25); }
+      .stat-icon.purple { background: rgba(111, 116, 255, 0.25); }
+      .stat-icon.green { background: rgba(34, 197, 94, 0.25); }
+      .stat-icon.red { background: rgba(239, 68, 68, 0.25); }
+      .stat-value {
+        font-size: 26px;
+        font-weight: 700;
+      }
+      .muted { color: var(--muted); }
+      .progress {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+      .progress > span {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: rgba(15, 19, 30, 0.95);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: var(--glow);
+      }
+      th, td {
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        text-align: left;
+        font-size: 13px;
+      }
+      th { color: var(--muted); font-weight: 600; }
+      .pill {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(34, 197, 94, 0.18);
+        color: #86efac;
+      }
+      .badge { padding: 2px 8px; border-radius: 8px; background: rgba(111, 116, 255, 0.12); }
+      @media (max-width: 980px) {
+        .app { flex-direction: column; }
+        .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; }
+        .menu { flex-direction: row; flex-wrap: wrap; }
+        .content { padding: 20px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-badge">3X</div>
+          3XUIStore
+        </div>
+        <nav class="menu">
+          <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">
+            <span class="icon">H</span> Главная
+          </a>
+          <a href="/admin/clients" class="{{ 'active' if active == 'clients' else '' }}">
+            <span class="icon">C</span> Клиенты
+          </a>
+          <a href="/admin/servers" class="{{ 'active' if active == 'servers' else '' }}">
+            <span class="icon">S</span> Серверы
+          </a>
+          <a href="/admin/payments" class="{{ 'active' if active == 'payments' else '' }}">
+            <span class="icon">P</span> Платежи
+          </a>
+        </nav>
+        <div class="sidebar-footer">v1.0 Admin Panel</div>
+      </aside>
+      <div class="content">
+        <div class="topbar">
+          <div class="topbar-title">
+            <span class="home">H</span>
+            {{ page_title or title or "Панель" }}
+          </div>
+        </div>
+        <main>
+          {% block content %}{% endblock %}
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

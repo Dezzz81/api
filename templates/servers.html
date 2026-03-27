@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% set title = "Servers" %}
+{% set page_title = "Серверы" %}
+{% set active = "servers" %}
+
+{% block content %}
+  <h2 class="section-title">3x-ui Серверы</h2>
+  {% for s in servers %}
+    <div class="card" style="margin-bottom:16px;">
+      <div class="stat-head">
+        <div>
+          <strong>{{ s.name }}</strong>
+          <span class="muted">({{ s.id }})</span>
+        </div>
+        <span class="badge">{{ s.host }}:{{ s.port }}</span>
+      </div>
+      <div class="muted" style="margin-bottom:12px;">Online clients: {{ s.onlines_count }}</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Inbound ID</th>
+            <th>Port</th>
+            <th>Protocol</th>
+            <th>Remark</th>
+            <th>Up</th>
+            <th>Down</th>
+            <th>Total</th>
+            <th>Enable</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ib in s.inbounds %}
+          <tr>
+            <td>{{ ib.id }}</td>
+            <td>{{ ib.port }}</td>
+            <td>{{ ib.protocol }}</td>
+            <td>{{ ib.remark }}</td>
+            <td>{{ ib.up }}</td>
+            <td>{{ ib.down }}</td>
+            <td>{{ ib.total }}</td>
+            <td>{{ ib.enable }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endfor %}
+{% endblock %}
