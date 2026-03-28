@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set title = "Payments" %}
+{% set page_title = "Платежи" %}
+{% set active = "payments" %}
+
+{% block content %}
+  <h2 class="section-title">Платежные события</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>TG ID</th>
+        <th>Status</th>
+        <th>Client UUID</th>
+        <th>Amount</th>
+        <th>Currency</th>
+        <th>Provider</th>
+        <th>Paid Until</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in payments %}
+      {% set sub = subs_map.get(p.tg_id) %}
+      <tr>
+        <td>{{ p.id }}</td>
+        <td>{{ p.tg_id or "-" }}</td>
+        <td>{{ p.status }}</td>
+        <td>{{ p.client_uuid or "-" }}</td>
+        <td>{{ p.amount or "-" }}</td>
+        <td>{{ p.currency or "-" }}</td>
+        <td>{{ p.provider or "-" }}</td>
+        <td>{{ sub.paid_until if sub else "-" }}</td>
+        <td>{{ p.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
