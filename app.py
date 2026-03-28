@@ -1004,7 +1004,8 @@ async def create_client(
     reality_inner = _parse_json_maybe(reality_settings.get("settings"))
 
     security = stream_settings.get("security")
-    if security != "reality":
+    has_reality = bool(reality_settings) or bool(reality_inner)
+    if security != "reality" and not has_reality:
         raise HTTPException(
             status_code=500,
             detail="Inbound security is not set to reality",
