@@ -6,15 +6,15 @@
     <title>{{ title or "3x-ui Admin" }}</title>
     <style>
       :root {
-        --bg: #0d1018;
-        --panel: #151a25;
-        --panel-soft: #101521;
+        --bg: #07050c;
+        --panel: #120f1c;
+        --panel-soft: #0c0a14;
         --text: #e6e8ee;
         --muted: #9aa3b2;
-        --accent: #6f74ff;
-        --accent-2: #4cc3ff;
-        --border: rgba(111, 116, 255, 0.25);
-        --glow: 0 0 0 1px rgba(111, 116, 255, 0.25), 0 20px 40px rgba(8, 10, 16, 0.55);
+        --accent: #b43bff;
+        --accent-2: #7c4dff;
+        --border: rgba(180, 59, 255, 0.25);
+        --glow: 0 0 0 1px rgba(180, 59, 255, 0.22), 0 24px 50px rgba(4, 4, 8, 0.7);
       }
       * { box-sizing: border-box; }
       body {
@@ -22,9 +22,11 @@
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
         color: var(--text);
         background:
-          radial-gradient(1200px 600px at 20% 0%, rgba(111, 116, 255, 0.15), transparent 55%),
-          radial-gradient(900px 500px at 90% 10%, rgba(76, 195, 255, 0.12), transparent 60%),
-          linear-gradient(180deg, #0b0e16, #101522 60%, #0d1018);
+          radial-gradient(980px 620px at 12% 8%, rgba(201, 40, 175, 0.38), transparent 58%),
+          radial-gradient(900px 620px at 50% 55%, rgba(120, 35, 190, 0.32), transparent 62%),
+          radial-gradient(980px 620px at 86% 18%, rgba(35, 12, 70, 0.48), transparent 65%),
+          radial-gradient(760px 520px at 80% 86%, rgba(170, 32, 200, 0.22), transparent 60%),
+          linear-gradient(180deg, #05040a, #090712 55%, #05040a);
         min-height: 100vh;
       }
       .app {
@@ -100,16 +102,17 @@
       }
       .content {
         flex: 1;
-        padding: 24px 32px 40px;
+        padding: 28px 36px 48px;
       }
       .topbar {
-        background: linear-gradient(90deg, rgba(111, 116, 255, 0.85), rgba(111, 116, 255, 0.55));
+        background: linear-gradient(110deg, rgba(36, 18, 60, 0.95), rgba(24, 14, 40, 0.92));
+        border: 1px solid rgba(180, 59, 255, 0.18);
         border-radius: 16px;
-        padding: 16px 22px;
+        padding: 14px 20px;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        box-shadow: 0 10px 30px rgba(57, 61, 128, 0.35);
+        box-shadow: 0 12px 28px rgba(10, 6, 18, 0.55);
         margin-bottom: 24px;
       }
       .topbar-title {
@@ -123,25 +126,25 @@
         width: 28px;
         height: 28px;
         border-radius: 10px;
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(180, 59, 255, 0.2);
         display: grid;
         place-items: center;
         font-weight: 700;
       }
       .section-title {
-        margin: 0 0 14px 0;
-        font-size: 16px;
+        margin: 0 0 18px 0;
+        font-size: 20px;
         color: var(--text);
       }
       .grid {
         display: grid;
-        gap: 18px;
+        gap: 22px;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       }
       .card {
         background: linear-gradient(180deg, rgba(20, 24, 35, 0.96), rgba(14, 18, 28, 0.96));
         border-radius: 16px;
-        padding: 18px;
+        padding: 24px;
         box-shadow: var(--glow);
         border: 1px solid rgba(111, 116, 255, 0.18);
       }
@@ -167,6 +170,7 @@
       .stat-value {
         font-size: 26px;
         font-weight: 700;
+        text-align: center;
       }
       .muted { color: var(--muted); }
       .progress {
@@ -213,7 +217,9 @@
         text-decoration: none;
         font-size: 13px;
         font-weight: 600;
+        cursor: pointer;
       }
+      button.btn { font-family: inherit; }
       .btn.primary {
         border-color: rgba(99, 102, 241, 0.6);
         background: linear-gradient(90deg, rgba(99, 102, 241, 0.9), rgba(111, 116, 255, 0.7));
@@ -260,6 +266,27 @@
         padding: 20px;
         box-shadow: var(--glow);
         border: 1px solid rgba(111, 116, 255, 0.2);
+      }
+      .form-grid {
+        display: grid;
+        gap: 14px 16px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+      .form-section {
+        margin-bottom: 18px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .form-section:last-of-type {
+        border-bottom: none;
+      }
+      .form-section-title {
+        font-size: 14px;
+        font-weight: 700;
+        margin: 4px 0 12px;
+        color: #d7d9e5;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
       }
       .form-field {
         display: flex;
@@ -348,21 +375,24 @@
     <div class="app">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-badge">3X</div>
-          3XUIStore
+          <div class="brand-badge">A</div>
+          Админка
         </div>
         <nav class="menu">
           <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">
-            <span class="icon">H</span> Главная
+            <span class="icon">🏠</span> Главная
           </a>
           <a href="/admin/clients" class="{{ 'active' if active == 'clients' else '' }}">
-            <span class="icon">C</span> Клиенты
+            <span class="icon">👥</span> Клиенты
           </a>
           <a href="/admin/servers" class="{{ 'active' if active == 'servers' else '' }}">
-            <span class="icon">S</span> Серверы
+            <span class="icon">🖥️</span> Серверы
           </a>
           <a href="/admin/payments" class="{{ 'active' if active == 'payments' else '' }}">
-            <span class="icon">P</span> Платежи
+            <span class="icon">💳</span> Платежи
+          </a>
+          <a href="/admin/settings" class="{{ 'active' if active == 'settings' else '' }}">
+            <span class="icon">⚙️</span> Настройки
           </a>
         </nav>
         <div class="sidebar-footer">v1.0 Admin Panel</div>
@@ -370,7 +400,7 @@
       <div class="content">
         <div class="topbar">
           <div class="topbar-title">
-            <span class="home">H</span>
+            <span class="home">{{ page_icon or "🏠" }}</span>
             {{ page_title or title or "Панель" }}
           </div>
         </div>

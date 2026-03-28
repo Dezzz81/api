@@ -38,7 +38,8 @@ if exist "%SCRIPT_DIR%docker-compose.yml" (
       echo [%date% %time%] Starting postgres via docker-compose >> "%LOG%"
       docker-compose -f "%SCRIPT_DIR%docker-compose.yml" up -d >> "%LOG%" 2>&1
     ) else (
-      echo [%date% %time%] Docker not found, skipping DB startup >> "%LOG%"
+      echo [%date% %time%] Docker not found, trying local PostgreSQL service >> "%LOG%"
+      powershell -NoProfile -Command "Get-Service -Name 'postgresql*' -ErrorAction SilentlyContinue | ForEach-Object { try { Start-Service $_.Name -ErrorAction Stop; Write-Output ('Started: ' + $_.Name) } catch { Write-Output ('Failed: ' + $_.Name) } }" >> "%LOG%" 2>&1
     )
   )
 )

@@ -5,3 +5,4 @@ __pycache__/
 logs/
 pgdata/
 .DS_Store
+servers.json

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -12,7 +12,14 @@ _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
+def _db_disabled() -> bool:
+    flag = os.getenv("DISABLE_DB", "").strip().lower()
+    return flag in {"1", "true", "yes", "y", "on"}
+
+
 def get_database_url() -> str:
+    if _db_disabled():
+        raise RuntimeError("DATABASE_URL is disabled (DISABLE_DB=1)")
     url = os.getenv("DATABASE_URL", "").strip()
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
@@ -41,6 +48,15 @@ async def init_db() -> None:
 
 
 async def _run_migrations(conn) -> None:
+    try:
+        dialect = conn.engine.dialect.name
+    except Exception:
+        dialect = ""
+
+    if dialect == "sqlite":
+        # Skip PostgreSQL-specific migrations when running locally on SQLite
+        return
+
     await conn.execute(
         text(
             """
@@ -59,7 +75,10 @@ async def _run_migrations(conn) -> None:
     )
 
 
-async def get_db() -> AsyncIterator[AsyncSession]:
+async def get_db() -> AsyncIterator[Optional[AsyncSession]]:
+    if _db_disabled():
+        yield None
+        return
     session = get_sessionmaker()()
     try:
         yield session

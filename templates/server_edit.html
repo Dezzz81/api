@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% set title = "Server Edit" %}
+{% set page_title = "Сервер" %}
+{% set active = "servers" %}
+{% set page_icon = "🖥️" %}
+
+{% block content %}
+  <h2 class="section-title">{{ "Добавить сервер" if is_new else "Редактировать сервер" }}</h2>
+  <div class="form-card">
+    <form method="post" action="/admin/servers/save">
+      <input type="hidden" name="id" value="{{ server.id }}" />
+      <div class="form-section">
+        <div class="form-section-title">Основная информация</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Название сервера (для админки)</label>
+            <input type="text" name="name" value="{{ server.name }}" placeholder="SE Швеция" />
+          </div>
+          <div class="form-field">
+            <label>Inbound ID</label>
+            <input type="number" name="inbound_id" value="{{ server.inbound_id }}" placeholder="1" />
+          </div>
+          <div class="form-field">
+            <label>Протокол</label>
+            <select name="protocol">
+              <option value="vless" {% if server.protocol == "vless" %}selected{% endif %}>VLESS</option>
+              <option value="vmess" {% if server.protocol == "vmess" %}selected{% endif %}>VMESS</option>
+              <option value="trojan" {% if server.protocol == "trojan" %}selected{% endif %}>Trojan</option>
+              <option value="shadowsocks" {% if server.protocol == "shadowsocks" %}selected{% endif %}>Shadowsocks</option>
+            </select>
+            <div class="help">Для Trojan/Shadowsocks UUID используется как пароль.</div>
+          </div>
+          <div class="form-field">
+            <label>Client Flow (опционально)</label>
+            <select name="client_flow">
+              <option value="" {% if not server.client_flow %}selected{% endif %}>Оставить пустым</option>
+              <option value="xtls-rprx-vision" {% if server.client_flow == "xtls-rprx-vision" %}selected{% endif %}>xtls-rprx-vision</option>
+              <option value="xtls-rprx-direct" {% if server.client_flow == "xtls-rprx-direct" %}selected{% endif %}>xtls-rprx-direct</option>
+            </select>
+            <div class="help">Если пусто — flow не добавляется клиентам.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Данные для подключения к 3X-UI панели</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>URL (без http/https и порта)</label>
+            <input type="text" name="host" value="{{ server.host }}" placeholder="45.8.93.35" required />
+          </div>
+          <div class="form-field">
+            <label>Порт панели</label>
+            <input type="number" name="port" value="{{ server.port }}" placeholder="2053" />
+          </div>
+          <div class="form-field">
+            <label>Секретный путь (если есть)</label>
+            <input type="text" name="base_path" value="{{ server.base_path }}" placeholder="/randompath" />
+          </div>
+          <div class="form-field">
+            <label>Логин</label>
+            <input type="text" name="username" value="{{ server.username }}" placeholder="admin" />
+          </div>
+          <div class="form-field">
+            <label>Пароль</label>
+            <input type="password" name="password" value="{{ server.password }}" placeholder="пароль" />
+          </div>
+          <div class="form-field">
+            <label>2FA</label>
+            <input type="text" name="twofa" value="{{ server.twofa }}" placeholder="код 2FA (если нужен)" />
+          </div>
+          <div class="form-field">
+            <label>Схема</label>
+            <select name="scheme">
+              <option value="https" {% if server.scheme == "https" %}selected{% endif %}>https</option>
+              <option value="http" {% if server.scheme == "http" %}selected{% endif %}>http</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Проверка TLS</label>
+            <select name="verify_tls">
+              <option value="true" {% if server.verify_tls %}selected{% endif %}>Включена</option>
+              <option value="false" {% if not server.verify_tls %}selected{% endif %}>Отключена</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Данные для ссылки-подписки клиента</div>
+        <div class="alert">
+          Важно: Эти поля должны быть заполнены. Если оставить пустыми, будут использованы значения по умолчанию.
+        </div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Публичный хост (домен/IP для клиента)</label>
+            <input type="text" name="public_host" value="{{ server.public_host }}" placeholder="45.8.93.35" />
+          </div>
+          <div class="form-field">
+            <label>Публичный порт (порт клиента)</label>
+            <input type="number" name="public_port" value="{{ server.public_port }}" placeholder="2096" />
+          </div>
+          <div class="form-field">
+            <label>Префикс пути для подписки</label>
+            <input type="text" name="sub_path" value="{{ server.sub_path }}" placeholder="sub" />
+          </div>
+          <div class="form-field">
+            <label>VLESS Host (если отличается)</label>
+            <input type="text" name="vless_host" value="{{ server.vless_host }}" placeholder="vpn.example.com" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Данные с панели 3X-UI</div>
+        {% if panel_info and panel_info.error %}
+          <div class="alert">Ошибка получения данных: {{ panel_info.error }}</div>
+        {% elif panel_info %}
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Протокол inbound</label>
+              <input type="text" value="{{ panel_info.protocol }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Порт inbound</label>
+              <input type="text" value="{{ panel_info.port }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Remark</label>
+              <input type="text" value="{{ panel_info.remark }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Enable</label>
+              <input type="text" value="{{ panel_info.enable }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Up</label>
+              <input type="text" value="{{ panel_info.up }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Down</label>
+              <input type="text" value="{{ panel_info.down }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Total</label>
+              <input type="text" value="{{ panel_info.total }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>CPU</label>
+              <input type="text" value="{{ panel_info.cpu }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>RAM</label>
+              <input type="text" value="{{ panel_info.mem_used }} / {{ panel_info.mem_total }} ({{ panel_info.ram }}%)" readonly />
+            </div>
+            <div class="form-field">
+              <label>Swap</label>
+              <input type="text" value="{{ panel_info.swap_used }} / {{ panel_info.swap_total }} ({{ panel_info.swap }}%)" readonly />
+            </div>
+            <div class="form-field">
+              <label>Disk</label>
+              <input type="text" value="{{ panel_info.disk_used }} / {{ panel_info.disk_total }} ({{ panel_info.disk }}%)" readonly />
+            </div>
+            <div class="form-field">
+              <label>Load</label>
+              <input type="text" value="{{ panel_info.load }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Xray</label>
+              <input type="text" value="{{ panel_info.xray_state }} {{ panel_info.xray_version }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Uptime</label>
+              <input type="text" value="OS: {{ panel_info.os_uptime }} / Xray: {{ panel_info.xray_uptime }}" readonly />
+            </div>
+            <div class="form-field">
+              <label>Threads</label>
+              <input type="text" value="{{ panel_info.threads }}" readonly />
+            </div>
+          </div>
+        {% else %}
+          <div class="empty-state">Нет данных с панели.</div>
+        {% endif %}
+      </div>
+      <div class="form-actions">
+        <a class="btn secondary" href="/admin/servers">Отмена</a>
+        <button class="btn primary" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

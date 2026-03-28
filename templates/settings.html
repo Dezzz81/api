@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% set title = "Settings" %}
+{% set page_title = "Настройки" %}
+{% set active = "settings" %}
+{% set page_icon = "⚙️" %}
+
+{% block content %}
+  <h2 class="section-title">Настройки</h2>
+  <div class="form-card">
+    <form method="post" action="/admin/settings/save">
+      <div class="form-section">
+        <div class="form-section-title">Безопасность</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>API ключ</label>
+            <input type="text" name="api_token" value="{{ api_token }}" placeholder="change_me" />
+          </div>
+          <div class="form-field">
+            <label>Админ логин</label>
+            <input type="text" name="admin_user" value="{{ admin_user }}" placeholder="admin" />
+          </div>
+          <div class="form-field">
+            <label>Админ пароль</label>
+            <input type="password" name="admin_pass" value="" placeholder="оставьте пустым, чтобы не менять" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">3X-UI</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Схема</label>
+            <select name="panel_scheme">
+              <option value="https" {% if panel_scheme == "https" %}selected{% endif %}>https</option>
+              <option value="http" {% if panel_scheme == "http" %}selected{% endif %}>http</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Host</label>
+            <input type="text" name="panel_host" value="{{ panel_host }}" placeholder="panel.example.com" />
+          </div>
+          <div class="form-field">
+            <label>Port</label>
+            <input type="number" name="panel_port" value="{{ panel_port }}" placeholder="2053" />
+          </div>
+          <div class="form-field">
+            <label>Base Path</label>
+            <input type="text" name="panel_base_path" value="{{ panel_base_path }}" placeholder="/randompath" />
+          </div>
+          <div class="form-field">
+            <label>Username</label>
+            <input type="text" name="panel_username" value="{{ panel_username }}" placeholder="admin" />
+          </div>
+          <div class="form-field">
+            <label>Password</label>
+            <input type="password" name="panel_password" value="" placeholder="оставьте пустым, чтобы не менять" />
+          </div>
+          <div class="form-field">
+            <label>2FA</label>
+            <input type="text" name="panel_2fa" value="{{ panel_2fa }}" placeholder="" />
+          </div>
+          <div class="form-field">
+            <label>Inbound ID</label>
+            <input type="number" name="inbound_id" value="{{ inbound_id }}" placeholder="1" />
+          </div>
+          <div class="form-field">
+            <label>VLESS Host</label>
+            <input type="text" name="vless_host" value="{{ vless_host }}" placeholder="vpn.example.com" />
+          </div>
+          <div class="form-field">
+            <label>Проверка TLS</label>
+            <input type="checkbox" name="panel_verify_tls" {% if panel_verify_tls %}checked{% endif %} />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">VLESS по умолчанию</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Flow</label>
+            <input type="text" name="default_flow" value="{{ default_flow }}" placeholder="xtls-rprx-vision" />
+          </div>
+          <div class="form-field">
+            <label>Fingerprint</label>
+            <input type="text" name="default_fingerprint" value="{{ default_fingerprint }}" placeholder="random" />
+          </div>
+          <div class="form-field">
+            <label>ALPN</label>
+            <input type="text" name="default_alpn" value="{{ default_alpn }}" placeholder="h2,http/1.1" />
+          </div>
+          <div class="form-field">
+            <label>Таймаут запросов</label>
+            <input type="number" name="request_timeout" value="{{ request_timeout }}" placeholder="10" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Разработка</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Отключить БД</label>
+            <input type="checkbox" name="disable_db" {% if disable_db %}checked{% endif %} />
+            <div class="help">Для локального теста без БД</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

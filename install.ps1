@@ -23,7 +23,17 @@ if (Test-Path "docker-compose.yml") {
   } elseif (Get-Command docker-compose -ErrorAction SilentlyContinue) {
     docker-compose -f "docker-compose.yml" up -d
   } else {
-    Write-Host "Docker not found. Skipping PostgreSQL startup."
+    $pgService = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "postgresql*" }
+    if ($pgService) {
+      try {
+        Start-Service $pgService.Name
+        Write-Host "PostgreSQL service started: $($pgService.Name)"
+      } catch {
+        Write-Host "PostgreSQL service found but could not be started. Try running PowerShell as Administrator."
+      }
+    } else {
+      Write-Host "Docker not found and PostgreSQL service not detected. Install Docker Desktop or PostgreSQL."
+    }
   }
 }
 

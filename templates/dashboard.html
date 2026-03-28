@@ -2,21 +2,22 @@
 {% set title = "Dashboard" %}
 {% set page_title = "Главная страница" %}
 {% set active = "dashboard" %}
+{% set page_icon = "🏠" %}
 
 {% block content %}
   <h2 class="section-title">Сводка</h2>
   <div class="grid">
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon blue">U</div>
+        <div class="stat-icon blue">👥</div>
         <div class="muted">Всего клиентов</div>
       </div>
       <div class="stat-value">{{ total_clients }}</div>
-      <div class="muted">Создано через API</div>
+      <div class="muted">Всего пользователей</div>
     </div>
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon green">P</div>
+        <div class="stat-icon green">💳</div>
         <div class="muted">Оплаченные</div>
       </div>
       <div class="stat-value">{{ total_paid }}</div>
@@ -24,15 +25,20 @@
     </div>
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon purple">S</div>
+        <div class="stat-icon purple">🖥️</div>
         <div class="muted">3x-ui серверы</div>
       </div>
       <div class="stat-value">{{ servers_count }}</div>
       <div class="muted">Доступные панели</div>
     </div>
+  </div>
+
+  <div style="margin-top: 26px;"></div>
+  <h2 class="section-title">Мониторинг ресурсов</h2>
+  <div class="grid">
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon blue">C</div>
+        <div class="stat-icon blue">⚙️</div>
         <div class="muted">CPU</div>
       </div>
       <div class="stat-value">{{ cpu }}%</div>
@@ -41,7 +47,7 @@
     {% set ram_pct = (mem.used / mem.total * 100) | round(1) %}
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon purple">R</div>
+        <div class="stat-icon purple">🧠</div>
         <div class="muted">RAM</div>
       </div>
       <div class="stat-value">{{ ram_pct }}%</div>
@@ -51,7 +57,7 @@
     {% set disk_pct = (disk.used / disk.total * 100) | round(1) %}
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon green">D</div>
+        <div class="stat-icon green">💾</div>
         <div class="muted">Disk</div>
       </div>
       <div class="stat-value">{{ disk_pct }}%</div>
@@ -59,4 +65,10 @@
       <div class="progress"><span style="width: {{ disk_pct }}%;"></span></div>
     </div>
   </div>
+
+  <script>
+    setInterval(() => {
+      window.location.reload();
+    }, 4000);
+  </script>
 {% endblock %}

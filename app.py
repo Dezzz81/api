@@ -8,13 +8,14 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
 import psutil
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -93,6 +94,11 @@ def _required(name: str) -> str:
     return value
 
 
+def _db_disabled() -> bool:
+    flag = _env("DISABLE_DB", "").strip().lower()
+    return flag in {"1", "true", "yes", "y", "on"}
+
+
 @dataclass(frozen=True)
 class PanelServer:
     id: str
@@ -107,6 +113,11 @@ class PanelServer:
     verify_tls: bool
     inbound_id: int
     vless_host: str
+    protocol: str
+    client_flow: str
+    public_host: str
+    public_port: int
+    sub_path: str
 
     @property
     def base_url(self) -> str:
@@ -120,6 +131,7 @@ class PanelServer:
 
 _PANEL_SERVERS: List[PanelServer] | None = None
 _INSTALL_JOBS: Dict[str, Dict[str, Any]] = {}
+_SERVER_NET_CACHE: Dict[str, Dict[str, float]] = {}
 
 
 def _as_bool(value: Optional[str], default: bool) -> bool:
@@ -148,13 +160,97 @@ def _normalize_base_path(path: str) -> str:
     return path.rstrip("/")
 
 
+def _servers_config_path() -> Path:
+    return Path(__file__).resolve().parent / "servers.json"
+
+
+def _env_file_path() -> Path:
+    return Path(__file__).resolve().parent / ".env"
+
+
+def _read_env_file() -> Dict[str, str]:
+    path = _env_file_path()
+    if not path.exists():
+        return {}
+    data: Dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.strip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key.strip()] = value.strip()
+    return data
+
+
+def _write_env_file(values: Dict[str, str]) -> None:
+    path = _env_file_path()
+    lines: List[str] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line or line.strip().startswith("#") or "=" not in line:
+                lines.append(line)
+                continue
+            key, _ = line.split("=", 1)
+            key = key.strip()
+            if key in values:
+                lines.append(f"{key}={values[key]}")
+                values.pop(key, None)
+            else:
+                lines.append(line)
+    for key, value in values.items():
+        lines.append(f"{key}={value}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def _load_servers_config() -> Optional[List[Dict[str, Any]]]:
+    path = _servers_config_path()
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict) and isinstance(raw.get("servers"), list):
+        return raw["servers"]
+    return []
+
+
+def _save_servers_config(items: List[Dict[str, Any]]) -> None:
+    path = _servers_config_path()
+    path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _server_to_dict(server: PanelServer) -> Dict[str, Any]:
+    return {
+        "id": server.id,
+        "name": server.name,
+        "scheme": server.scheme,
+        "host": server.host,
+        "port": server.port,
+        "base_path": server.base_path,
+        "username": server.username,
+        "password": server.password,
+        "twofa": server.twofa,
+        "verify_tls": server.verify_tls,
+        "inbound_id": server.inbound_id,
+        "vless_host": server.vless_host,
+        "protocol": server.protocol,
+        "client_flow": server.client_flow,
+        "public_host": server.public_host,
+        "public_port": server.public_port,
+        "sub_path": server.sub_path,
+    }
+
+
 def _load_panel_servers() -> List[PanelServer]:
+    items = _load_servers_config()
     raw = _env("PANEL_SERVERS_JSON", "")
-    if raw:
+    if items is None and raw:
         try:
             items = json.loads(raw)
         except Exception as exc:
             raise RuntimeError("PANEL_SERVERS_JSON is not valid JSON") from exc
+    if items:
         servers: List[PanelServer] = []
         for idx, item in enumerate(items or []):
             if not isinstance(item, dict):
@@ -174,6 +270,11 @@ def _load_panel_servers() -> List[PanelServer]:
             )
             inbound_id = _as_int(str(item.get("inbound_id") or _env("INBOUND_ID", "0")), 0)
             vless_host = str(item.get("vless_host") or _env("VLESS_HOST") or host)
+            protocol = str(item.get("protocol") or "vless").lower()
+            client_flow = str(item.get("client_flow") or "")
+            public_host = str(item.get("public_host") or vless_host or host)
+            public_port = _as_int(str(item.get("public_port") or "0"), 0)
+            sub_path = str(item.get("sub_path") or "sub")
             if inbound_id <= 0:
                 inbound_id = 0
             servers.append(
@@ -190,6 +291,11 @@ def _load_panel_servers() -> List[PanelServer]:
                     verify_tls=verify_tls,
                     inbound_id=inbound_id,
                     vless_host=vless_host,
+                    protocol=protocol,
+                    client_flow=client_flow,
+                    public_host=public_host,
+                    public_port=public_port,
+                    sub_path=sub_path,
                 )
             )
         if servers:
@@ -217,6 +323,11 @@ def _load_panel_servers() -> List[PanelServer]:
             verify_tls=_as_bool(_env("PANEL_VERIFY_TLS", "true"), True),
             inbound_id=inbound_id,
             vless_host=_env("VLESS_HOST") or _required("PANEL_HOST"),
+            protocol="vless",
+            client_flow="",
+            public_host=_env("VLESS_HOST") or _required("PANEL_HOST"),
+            public_port=0,
+            sub_path="sub",
         )
     ]
 
@@ -341,6 +452,330 @@ def _mask_secret(value: str) -> str:
     if len(value) <= 4:
         return "*" * len(value)
     return value[:2] + "*" * (len(value) - 4) + value[-2:]
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _to_number_with_unit(value: Any) -> Optional[tuple[float, Optional[str]]]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value), None
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if not v:
+            return None
+        unit = None
+        for u in ("kb", "mb", "gb", "tb", "kib", "mib", "gib", "tib"):
+            if v.endswith(u):
+                unit = u
+                v = v[: -len(u)].strip()
+                break
+        try:
+            return float(v), unit
+        except Exception:
+            return None
+    return None
+
+
+def _bytes_from_number(num: float, unit: Optional[str]) -> float:
+    if unit is None:
+        return num
+    unit = unit.lower()
+    if unit in {"kb", "kib"}:
+        return num * 1024
+    if unit in {"mb", "mib"}:
+        return num * 1024 * 1024
+    if unit in {"gb", "gib"}:
+        return num * 1024 * 1024 * 1024
+    if unit in {"tb", "tib"}:
+        return num * 1024 * 1024 * 1024 * 1024
+    return num
+
+
+def _format_bytes(num: Optional[float]) -> Optional[str]:
+    if num is None:
+        return None
+    try:
+        num = float(num)
+    except Exception:
+        return None
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if num < 1024:
+            return f"{num:.2f} {unit}"
+        num /= 1024
+    return f"{num:.2f} PB"
+
+
+def _extract_size_pair(value: Any) -> tuple[Optional[str], Optional[str], Optional[float]]:
+    if isinstance(value, dict):
+        used = _pick(value, ["used", "current", "usedBytes", "used_bytes", "usedMemory", "used_mem", "usedGB", "usedMb"])
+        total = _pick(value, ["total", "totalBytes", "total_bytes", "totalMemory", "total_mem", "totalGB", "totalMb"])
+    else:
+        used = None
+        total = None
+    used_num = _to_number_with_unit(used)
+    total_num = _to_number_with_unit(total)
+    used_b = _bytes_from_number(*used_num) if used_num else None
+    total_b = _bytes_from_number(*total_num) if total_num else None
+    pct = None
+    if used_b is not None and total_b:
+        pct = round((used_b / total_b) * 100, 1) if total_b > 0 else None
+    return _format_bytes(used_b) if used_b is not None else None, _format_bytes(total_b) if total_b is not None else None, pct
+
+
+def _extract_percent(value: Any) -> Optional[float]:
+    if isinstance(value, dict):
+        used_str, total_str, pct = _extract_size_pair(value)
+        if pct is not None:
+            return pct
+        if "used" in value and "total" in value:
+            try:
+                used = float(value.get("used"))
+                total = float(value.get("total"))
+                if total > 0:
+                    return (used / total) * 100
+            except Exception:
+                pass
+        for key in ("percent", "usedPercent", "usage", "used_percent", "value"):
+            if key in value:
+                return _to_float(value.get(key))
+    if isinstance(value, list):
+        for item in value:
+            pct = _extract_percent(item)
+            if pct is not None:
+                return pct
+    return _to_float(value)
+
+
+def _format_percent(value: Any) -> Optional[float]:
+    pct = _extract_percent(value)
+    if pct is None:
+        return None
+    return round(pct, 1)
+
+
+def _format_rate(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        v = value.strip()
+        if not v:
+            return None
+        if any(unit in v.lower() for unit in ("mbps", "kbps", "gbps", "bps", "mb/s", "kb/s", "gb/s")):
+            return v
+        num = _to_float(v)
+        if num is None:
+            return v
+        value = num
+    num = _to_float(value)
+    if num is None:
+        return None
+    if num < 500:
+        return f"{num:.1f} Mbps"
+    mbps = (num * 8) / 1_000_000
+    return f"{mbps:.1f} Mbps"
+
+
+def _format_rate_bps(value: Optional[float]) -> Optional[str]:
+    if value is None:
+        return None
+    mbps = (value * 8) / 1_000_000
+    return f"{mbps:.1f} Mbps"
+
+
+def _calc_rate(server_id: str, up_total: Optional[float], down_total: Optional[float]) -> Dict[str, Optional[str]]:
+    now = time.time()
+    prev = _SERVER_NET_CACHE.get(server_id)
+    _SERVER_NET_CACHE[server_id] = {
+        "ts": now,
+        "up": float(up_total or 0),
+        "down": float(down_total or 0),
+    }
+    if not prev or up_total is None or down_total is None:
+        return {"up": None, "down": None}
+    dt = now - prev.get("ts", now)
+    if dt <= 0:
+        return {"up": None, "down": None}
+    up_delta = float(up_total) - float(prev.get("up", up_total))
+    down_delta = float(down_total) - float(prev.get("down", down_total))
+    if up_delta < 0 or down_delta < 0:
+        return {"up": None, "down": None}
+    return {
+        "up": _format_rate_bps(up_delta / dt),
+        "down": _format_rate_bps(down_delta / dt),
+    }
+
+
+def _pick(d: Dict[str, Any], keys: List[str]) -> Any:
+    for key in keys:
+        if key in d:
+            return d.get(key)
+    return None
+
+
+def _find_stats_dict(obj: Any) -> Optional[Dict[str, Any]]:
+    """Best-effort search for a dict that contains system stats fields."""
+    targets = {
+        "cpu",
+        "cpuPercent",
+        "cpu_percent",
+        "cpuUsage",
+        "mem",
+        "memory",
+        "memPercent",
+        "memoryPercent",
+        "disk",
+        "diskPercent",
+        "disk_percent",
+        "diskUsage",
+        "netTraffic",
+        "traffic",
+        "network",
+        "net",
+    }
+    queue = [obj]
+    visited = 0
+    while queue and visited < 200:
+        visited += 1
+        current = queue.pop(0)
+        if isinstance(current, dict):
+            if any(key in current for key in targets):
+                return current
+            # common wrapper keys
+            for key in ("obj", "data", "result", "status", "stats", "stat", "system", "server", "info"):
+                if key in current:
+                    queue.append(current[key])
+            # also traverse all values
+            for value in current.values():
+                if isinstance(value, (dict, list)):
+                    queue.append(value)
+        elif isinstance(current, list):
+            for item in current:
+                if isinstance(item, (dict, list)):
+                    queue.append(item)
+    return None
+
+
+async def _tcp_ping(host: str, port: int, timeout: float) -> Optional[float]:
+    start = time.perf_counter()
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return round((time.perf_counter() - start) * 1000, 1)
+    except Exception:
+        return None
+
+
+async def _xui_get_server_stats(client: httpx.AsyncClient, server: PanelServer) -> Dict[str, Any]:
+    endpoints = [
+        "/panel/api/server/status",
+        "/panel/api/server/stat",
+        "/panel/api/server/info",
+        "/panel/api/system/status",
+        "/panel/api/system/info",
+        "/panel/api/system",
+        "/panel/api/monitoring",
+        "/panel/api/monitoring/get",
+    ]
+    data: Dict[str, Any] = {}
+    for path in endpoints:
+        try:
+            resp = await client.get(_build_server_url(server, path))
+            if resp.status_code >= 400:
+                continue
+            payload = resp.json()
+            obj = payload
+            if isinstance(payload, dict) and "obj" in payload:
+                obj = payload.get("obj")
+            stats_dict = _find_stats_dict(obj)
+            if not isinstance(stats_dict, dict):
+                continue
+            data = stats_dict
+            break
+        except Exception:
+            continue
+    if not data:
+        return {}
+    net = _pick(data, ["netTraffic", "traffic", "network", "net"]) or {}
+    up_raw = _pick(net, ["up", "upload", "tx", "sent", "out"]) or _pick(data, ["up", "upload", "tx"])
+    down_raw = _pick(net, ["down", "download", "rx", "received", "in"]) or _pick(data, ["down", "download", "rx"])
+    up_total = None
+    down_total = None
+    if not (isinstance(up_raw, str) and any(unit in up_raw.lower() for unit in ("mbps", "kbps", "gbps", "bps"))):
+        up_total = _to_float(up_raw)
+    if not (isinstance(down_raw, str) and any(unit in down_raw.lower() for unit in ("mbps", "kbps", "gbps", "bps"))):
+        down_total = _to_float(down_raw)
+    mem_obj = _pick(data, ["mem", "memory", "ram"])
+    swap_obj = _pick(data, ["swap", "swapMemory"])
+    disk_obj = _pick(data, ["disk", "storage"])
+    mem_used, mem_total, mem_pct = _extract_size_pair(mem_obj)
+    swap_used, swap_total, swap_pct = _extract_size_pair(swap_obj)
+    disk_used, disk_total, disk_pct = _extract_size_pair(disk_obj)
+
+    load = _pick(data, ["load", "loadavg", "loadAvg"])
+    if isinstance(load, (list, tuple)):
+        load_str = " ".join(str(x) for x in load[:3])
+    else:
+        load_str = str(load) if load is not None else None
+
+    xray = _pick(data, ["xray", "xrayStatus", "xrayInfo"]) or {}
+    xray_state = None
+    xray_version = None
+    if isinstance(xray, dict):
+        xray_state = _pick(xray, ["state", "status", "running"])
+        xray_version = _pick(xray, ["version", "ver"])
+
+    uptime = _pick(data, ["uptime", "upTime", "uptimes", "runningTime"]) or {}
+    os_uptime = None
+    xray_uptime = None
+    if isinstance(uptime, dict):
+        os_uptime = _pick(uptime, ["system", "os", "host"])
+        xray_uptime = _pick(uptime, ["xray", "core"])
+
+    threads = _pick(data, ["threads", "goroutines", "processes"])
+
+    cpu_pct = _format_percent(_pick(data, ["cpu", "cpuPercent", "cpu_percent", "cpuUsage", "cpu_used"]))
+    if mem_pct is None:
+        mem_pct = _format_percent(_pick(data, ["memPercent", "memoryPercent", "mem_percent", "ramPercent"]))
+    if disk_pct is None:
+        disk_pct = _format_percent(_pick(data, ["diskPercent", "disk_percent", "diskUsage"]))
+
+    return {
+        "cpu": cpu_pct,
+        "ram": mem_pct,
+        "disk": disk_pct,
+        "mem_used": mem_used,
+        "mem_total": mem_total,
+        "swap_used": swap_used,
+        "swap_total": swap_total,
+        "swap": swap_pct,
+        "disk_used": disk_used,
+        "disk_total": disk_total,
+        "load": load_str,
+        "xray_state": xray_state,
+        "xray_version": xray_version,
+        "os_uptime": os_uptime,
+        "xray_uptime": xray_uptime,
+        "threads": threads,
+        "up_total": up_total,
+        "down_total": down_total,
+        "up": _format_rate(up_raw),
+        "down": _format_rate(down_raw),
+    }
 
 
 def _job_log(job_id: str, message: str) -> None:
@@ -470,8 +905,18 @@ def _check_auth(authorization: Optional[str], x_api_token: Optional[str]) -> Non
 def _admin_auth(credentials: HTTPBasicCredentials = Depends(security)) -> None:
     admin_user = _env("ADMIN_USER", "")
     admin_pass = _env("ADMIN_PASS", "")
-    if not admin_user or not admin_pass:
-        raise HTTPException(status_code=500, detail="Admin credentials not configured")
+    # If admin_user is empty, allow access without auth (dev mode)
+    if not admin_user:
+        return
+    # If password is empty, allow any password (press Enter)
+    if not admin_pass:
+        if not secrets.compare_digest(credentials.username, admin_user):
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return
     if not secrets.compare_digest(credentials.username, admin_user) or not secrets.compare_digest(
         credentials.password, admin_pass
     ):
@@ -489,7 +934,8 @@ def health() -> Dict[str, str]:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    await init_db()
+    if not _db_disabled():
+        await init_db()
 
 
 @app.post("/api/v1/create")
@@ -497,7 +943,7 @@ async def create_client(
     payload: CreateClientRequest,
     authorization: Optional[str] = Header(default=None),
     x_api_token: Optional[str] = Header(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: Optional[AsyncSession] = Depends(get_db),
 ) -> Dict[str, Any]:
     _check_auth(authorization, x_api_token)
 
@@ -510,7 +956,7 @@ async def create_client(
 
     client_uuid = payload.client_id or str(uuid.uuid4())
     sub_id = payload.sub_id or secrets.token_hex(8)
-    flow = payload.flow or _env("DEFAULT_FLOW", "xtls-rprx-vision")
+    flow = payload.flow or server.client_flow or _env("DEFAULT_FLOW", "xtls-rprx-vision")
     email = payload.email or f"tg_{payload.tg_id or 'user'}_{client_uuid[:8]}"
     comment = payload.comment or ""
 
@@ -600,9 +1046,11 @@ async def create_client(
     if port <= 0:
         raise HTTPException(status_code=500, detail="Inbound port is missing")
 
-    vless_host = server.vless_host
+    vless_host = server.public_host or server.vless_host
     if not vless_host:
         raise HTTPException(status_code=500, detail="VLESS_HOST is not set")
+    if server.public_port and server.public_port > 0:
+        port = server.public_port
 
     label = comment or email
     vless_url = _build_vless_link(
@@ -621,23 +1069,24 @@ async def create_client(
         label=label,
     )
 
-    new_client = Client(
-        tg_id=payload.tg_id,
-        email=email,
-        comment=comment,
-        client_uuid=client_uuid,
-        sub_id=sub_id,
-        vless_url=vless_url,
-        inbound_id=inbound_id,
-        server_id=server.id,
-        status="active",
-    )
-    db.add(new_client)
-    if payload.tg_id:
-        existing = await db.execute(select(Subscription).where(Subscription.tg_id == payload.tg_id))
-        if existing.scalar_one_or_none() is None:
-            db.add(Subscription(tg_id=payload.tg_id, is_paid=False))
-    await db.commit()
+    if db is not None:
+        new_client = Client(
+            tg_id=payload.tg_id,
+            email=email,
+            comment=comment,
+            client_uuid=client_uuid,
+            sub_id=sub_id,
+            vless_url=vless_url,
+            inbound_id=inbound_id,
+            server_id=server.id,
+            status="active",
+        )
+        db.add(new_client)
+        if payload.tg_id:
+            existing = await db.execute(select(Subscription).where(Subscription.tg_id == payload.tg_id))
+            if existing.scalar_one_or_none() is None:
+                db.add(Subscription(tg_id=payload.tg_id, is_paid=False))
+        await db.commit()
 
     return {
         "ok": True,
@@ -655,7 +1104,7 @@ async def update_payment(
     payload: PaymentUpdateRequest,
     authorization: Optional[str] = Header(default=None),
     x_api_token: Optional[str] = Header(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: Optional[AsyncSession] = Depends(get_db),
 ) -> Dict[str, Any]:
     _check_auth(authorization, x_api_token)
 
@@ -664,40 +1113,46 @@ async def update_payment(
         paid_until_dt = datetime.fromtimestamp(payload.paid_until, tz=timezone.utc)
 
     is_paid = _payment_is_paid(payload.status)
-    result = await db.execute(select(Subscription).where(Subscription.tg_id == payload.tg_id))
-    sub = result.scalar_one_or_none()
-    if sub is None:
-        sub = Subscription(tg_id=payload.tg_id, is_paid=is_paid, paid_until=paid_until_dt)
-        db.add(sub)
-    else:
-        sub.is_paid = is_paid
-        if paid_until_dt is not None:
-            sub.paid_until = paid_until_dt
 
-    db.add(
-        PaymentEvent(
-            tg_id=payload.tg_id,
-            client_uuid=payload.client_uuid,
-            status=payload.status,
-            amount=payload.amount,
-            currency=payload.currency,
-            provider=payload.provider,
-            paid_at=paid_until_dt if is_paid else None,
+    if db is not None:
+        result = await db.execute(select(Subscription).where(Subscription.tg_id == payload.tg_id))
+        sub = result.scalar_one_or_none()
+        if sub is None:
+            sub = Subscription(tg_id=payload.tg_id, is_paid=is_paid, paid_until=paid_until_dt)
+            db.add(sub)
+        else:
+            sub.is_paid = is_paid
+            if paid_until_dt is not None:
+                sub.paid_until = paid_until_dt
+
+        db.add(
+            PaymentEvent(
+                tg_id=payload.tg_id,
+                client_uuid=payload.client_uuid,
+                status=payload.status,
+                amount=payload.amount,
+                currency=payload.currency,
+                provider=payload.provider,
+                paid_at=paid_until_dt if is_paid else None,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
 
     return {"ok": True, "tg_id": payload.tg_id, "is_paid": is_paid}
 
 
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
-async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
+async def admin_dashboard(request: Request, db: Optional[AsyncSession] = Depends(get_db)) -> HTMLResponse:
     cpu = psutil.cpu_percent(interval=0.2)
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage(os.getcwd())
 
-    total_clients = (await db.execute(select(func.count(Client.id)))).scalar() or 0
-    total_paid = (await db.execute(select(func.count(Subscription.id)).where(Subscription.is_paid.is_(True)))).scalar() or 0
+    if db is None:
+        total_clients = 0
+        total_paid = 0
+    else:
+        total_clients = (await db.execute(select(func.count(Client.id)))).scalar() or 0
+        total_paid = (await db.execute(select(func.count(Subscription.id)).where(Subscription.is_paid.is_(True)))).scalar() or 0
 
     servers = _get_panel_servers()
     return _render_template(
@@ -715,9 +1170,12 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)) 
 
 
 @app.get("/admin/clients", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
-async def admin_clients(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
-    result = await db.execute(select(Client).order_by(desc(Client.id)).limit(500))
-    clients = result.scalars().all()
+async def admin_clients(request: Request, db: Optional[AsyncSession] = Depends(get_db)) -> HTMLResponse:
+    if db is None:
+        clients = []
+    else:
+        result = await db.execute(select(Client).order_by(desc(Client.id)).limit(500))
+        clients = result.scalars().all()
     return _render_template(
         request,
         "clients.html",
@@ -734,6 +1192,7 @@ async def admin_servers(request: Request) -> HTMLResponse:
 
     async def fetch_server(server: PanelServer) -> Dict[str, Any]:
         try:
+            ping_ms = await _tcp_ping(server.host, server.port, timeout=timeout)
             async with httpx.AsyncClient(
                 timeout=timeout,
                 verify=server.verify_tls,
@@ -742,6 +1201,10 @@ async def admin_servers(request: Request) -> HTMLResponse:
                 await _xui_login(client, server)
                 inbounds = await _xui_list_inbounds(client, server)
                 onlines = await _xui_get_onlines(client, server)
+                stats = await _xui_get_server_stats(client, server)
+            rate = _calc_rate(server.id, stats.get("up_total"), stats.get("down_total"))
+            up_value = rate.get("up")
+            down_value = rate.get("down")
             return {
                 "id": server.id,
                 "name": server.name,
@@ -751,6 +1214,12 @@ async def admin_servers(request: Request) -> HTMLResponse:
                 "inbounds": inbounds,
                 "onlines": onlines,
                 "onlines_count": len(onlines),
+                "cpu": stats.get("cpu"),
+                "ram": stats.get("ram"),
+                "disk": stats.get("disk"),
+                "up": up_value,
+                "down": down_value,
+                "ping_ms": ping_ms,
                 "ok": True,
                 "error": None,
             }
@@ -764,6 +1233,12 @@ async def admin_servers(request: Request) -> HTMLResponse:
                 "inbounds": [],
                 "onlines": [],
                 "onlines_count": 0,
+                "cpu": None,
+                "ram": None,
+                "disk": None,
+                "up": None,
+                "down": None,
+                "ping_ms": None,
                 "ok": False,
                 "error": str(exc),
             }
@@ -789,6 +1264,210 @@ async def admin_servers(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/admin/servers/status", dependencies=[Depends(_admin_auth)])
+async def admin_servers_status() -> Dict[str, Any]:
+    servers = _get_panel_servers()
+    timeout = _as_float(_env("REQUEST_TIMEOUT", "10"), 10.0)
+
+    async def fetch_status(server: PanelServer) -> Dict[str, Any]:
+        try:
+            ping_ms = await _tcp_ping(server.host, server.port, timeout=timeout)
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                verify=server.verify_tls,
+                follow_redirects=True,
+            ) as client:
+                await _xui_login(client, server)
+                onlines = await _xui_get_onlines(client, server)
+                stats = await _xui_get_server_stats(client, server)
+            rate = _calc_rate(server.id, stats.get("up_total"), stats.get("down_total"))
+            return {
+                "id": server.id,
+                "ok": True,
+                "onlines_count": len(onlines),
+                "cpu": stats.get("cpu"),
+                "ram": stats.get("ram"),
+                "disk": stats.get("disk"),
+                "up": rate.get("up"),
+                "down": rate.get("down"),
+                "ping_ms": ping_ms,
+            }
+        except Exception as exc:
+            return {
+                "id": server.id,
+                "ok": False,
+                "onlines_count": 0,
+                "cpu": None,
+                "ram": None,
+                "disk": None,
+                "up": None,
+                "down": None,
+                "ping_ms": None,
+                "error": str(exc),
+            }
+
+    items: List[Dict[str, Any]] = []
+    if servers:
+        items = await asyncio.gather(*[fetch_status(server) for server in servers])
+    return {"items": items, "ts": time.time()}
+
+
+@app.get("/admin/servers/new", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
+async def admin_server_new(request: Request) -> HTMLResponse:
+    empty = {
+        "id": "",
+        "name": "",
+        "scheme": "https",
+        "host": "",
+        "port": 2053,
+        "base_path": "/",
+        "username": "admin",
+        "password": "",
+        "twofa": "",
+        "verify_tls": True,
+        "inbound_id": 1,
+        "vless_host": "",
+        "protocol": "vless",
+        "client_flow": "",
+        "public_host": "",
+        "public_port": 0,
+        "sub_path": "sub",
+    }
+    return _render_template(
+        request,
+        "server_edit.html",
+        {"server": empty, "is_new": True, "panel_info": None},
+    )
+
+
+@app.get("/admin/servers/edit/{server_id}", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
+async def admin_server_edit(request: Request, server_id: str) -> HTMLResponse:
+    items = _load_servers_config()
+    if items is None:
+        items = [_server_to_dict(s) for s in _get_panel_servers()]
+    server = next((item for item in items if str(item.get("id")) == server_id), None)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+    panel_info: Dict[str, Any] | None = None
+    try:
+        server_obj = _get_panel_server(server_id)
+        async with httpx.AsyncClient(
+            timeout=_as_float(_env("REQUEST_TIMEOUT", "10"), 10.0),
+            verify=server_obj.verify_tls,
+            follow_redirects=True,
+        ) as client:
+            await _xui_login(client, server_obj)
+            inbound = await _xui_get_inbound(client, server_obj, int(server_obj.inbound_id or 0))
+            stats = await _xui_get_server_stats(client, server_obj)
+        panel_info = {
+            "protocol": inbound.get("protocol"),
+            "port": inbound.get("port"),
+            "remark": inbound.get("remark"),
+            "enable": inbound.get("enable"),
+            "up": inbound.get("up"),
+            "down": inbound.get("down"),
+            "total": inbound.get("total"),
+            "cpu": stats.get("cpu"),
+            "ram": stats.get("ram"),
+            "mem_used": stats.get("mem_used"),
+            "mem_total": stats.get("mem_total"),
+            "swap": stats.get("swap"),
+            "swap_used": stats.get("swap_used"),
+            "swap_total": stats.get("swap_total"),
+            "disk": stats.get("disk"),
+            "disk_used": stats.get("disk_used"),
+            "disk_total": stats.get("disk_total"),
+            "load": stats.get("load"),
+            "xray_state": stats.get("xray_state"),
+            "xray_version": stats.get("xray_version"),
+            "os_uptime": stats.get("os_uptime"),
+            "xray_uptime": stats.get("xray_uptime"),
+            "threads": stats.get("threads"),
+        }
+    except Exception as exc:
+        panel_info = {"error": str(exc)}
+
+    return _render_template(
+        request,
+        "server_edit.html",
+        {"server": server, "is_new": False, "panel_info": panel_info},
+    )
+
+
+@app.post("/admin/servers/save", dependencies=[Depends(_admin_auth)])
+async def admin_server_save(request: Request) -> RedirectResponse:
+    form = await request.form()
+    server_id = str(form.get("id") or "").strip()
+    if not server_id:
+        server_id = f"srv{int(time.time())}"
+
+    host = str(form.get("host") or "").strip()
+    scheme = str(form.get("scheme") or "https").strip()
+    port = _as_int(str(form.get("port") or "2053"), 2053)
+    base_path = _normalize_base_path(str(form.get("base_path") or "/"))
+    username = str(form.get("username") or "admin").strip()
+    password = str(form.get("password") or "")
+    twofa = str(form.get("twofa") or "")
+    verify_tls = str(form.get("verify_tls") or "").lower() in {"on", "true", "1", "yes"}
+    inbound_id = _as_int(str(form.get("inbound_id") or "0"), 0)
+    vless_host = str(form.get("vless_host") or host).strip() or host
+    name = str(form.get("name") or server_id).strip() or server_id
+    protocol = str(form.get("protocol") or "vless").strip().lower()
+    client_flow = str(form.get("client_flow") or "").strip()
+    public_host = str(form.get("public_host") or host).strip() or host
+    public_port = _as_int(str(form.get("public_port") or "0"), 0)
+    sub_path = str(form.get("sub_path") or "sub").strip()
+
+    item = {
+        "id": server_id,
+        "name": name,
+        "scheme": scheme,
+        "host": host,
+        "port": port,
+        "base_path": base_path,
+        "username": username,
+        "password": password,
+        "twofa": twofa,
+        "verify_tls": verify_tls,
+        "inbound_id": inbound_id,
+        "vless_host": vless_host,
+        "protocol": protocol,
+        "client_flow": client_flow,
+        "public_host": public_host,
+        "public_port": public_port,
+        "sub_path": sub_path,
+    }
+
+    items = _load_servers_config()
+    if items is None:
+        items = [_server_to_dict(s) for s in _get_panel_servers()]
+    updated = False
+    for idx, existing in enumerate(items):
+        if str(existing.get("id")) == server_id:
+            items[idx] = item
+            updated = True
+            break
+    if not updated:
+        items.append(item)
+
+    _save_servers_config(items)
+    global _PANEL_SERVERS
+    _PANEL_SERVERS = None
+    return RedirectResponse(url="/admin/servers", status_code=303)
+
+
+@app.post("/admin/servers/delete/{server_id}", dependencies=[Depends(_admin_auth)])
+async def admin_server_delete(server_id: str) -> RedirectResponse:
+    items = _load_servers_config()
+    if items is None:
+        items = [_server_to_dict(s) for s in _get_panel_servers()]
+    items = [item for item in items if str(item.get("id")) != server_id]
+    _save_servers_config(items)
+    global _PANEL_SERVERS
+    _PANEL_SERVERS = None
+    return RedirectResponse(url="/admin/servers", status_code=303)
+
+
 @app.get("/admin/servers/config", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
 async def admin_servers_config(request: Request) -> HTMLResponse:
     servers = _get_panel_servers()
@@ -805,6 +1484,11 @@ async def admin_servers_config(request: Request) -> HTMLResponse:
             "verify_tls": s.verify_tls,
             "inbound_id": s.inbound_id,
             "vless_host": s.vless_host,
+            "protocol": s.protocol,
+            "client_flow": s.client_flow,
+            "public_host": s.public_host,
+            "public_port": s.public_port,
+            "sub_path": s.sub_path,
         }
         for s in servers
     ]
@@ -821,6 +1505,11 @@ async def admin_servers_config(request: Request) -> HTMLResponse:
             "verify_tls": True,
             "inbound_id": 1,
             "vless_host": "vpn.example.com",
+            "protocol": "vless",
+            "client_flow": "xtls-rprx-vision",
+            "public_host": "vpn.example.com",
+            "public_port": 2096,
+            "sub_path": "sub",
         }
     ]
     return _render_template(
@@ -831,6 +1520,76 @@ async def admin_servers_config(request: Request) -> HTMLResponse:
             "example": json.dumps(example, indent=2, ensure_ascii=False),
         },
     )
+
+
+@app.get("/admin/settings", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
+async def admin_settings(request: Request) -> HTMLResponse:
+    env_file = _read_env_file()
+
+    def val(key: str, default: str = "") -> str:
+        return env_file.get(key, _env(key, default) or default)
+
+    context = {
+        "api_token": val("API_TOKEN"),
+        "admin_user": val("ADMIN_USER", "admin"),
+        "admin_pass": "",
+        "panel_scheme": val("PANEL_SCHEME", "https"),
+        "panel_host": val("PANEL_HOST"),
+        "panel_port": val("PANEL_PORT", "2053"),
+        "panel_base_path": val("PANEL_BASE_PATH", "/"),
+        "panel_username": val("PANEL_USERNAME", "admin"),
+        "panel_password": "",
+        "panel_2fa": val("PANEL_2FA"),
+        "panel_verify_tls": val("PANEL_VERIFY_TLS", "true").lower() in {"1", "true", "yes", "y", "on"},
+        "inbound_id": val("INBOUND_ID", "1"),
+        "vless_host": val("VLESS_HOST"),
+        "default_flow": val("DEFAULT_FLOW", "xtls-rprx-vision"),
+        "default_fingerprint": val("DEFAULT_FINGERPRINT", "random"),
+        "default_alpn": val("DEFAULT_ALPN"),
+        "request_timeout": val("REQUEST_TIMEOUT", "10"),
+        "disable_db": val("DISABLE_DB", "").lower() in {"1", "true", "yes", "y", "on"},
+    }
+    return _render_template(request, "settings.html", context)
+
+
+@app.post("/admin/settings/save", dependencies=[Depends(_admin_auth)])
+async def admin_settings_save(request: Request) -> RedirectResponse:
+    form = await request.form()
+    existing = _read_env_file()
+
+    def keep_or_update(key: str, value: str) -> None:
+        existing[key] = value
+        os.environ[key] = value
+
+    def update_if_present(key: str, value: str) -> None:
+        if value != "":
+            keep_or_update(key, value)
+
+    keep_or_update("API_TOKEN", str(form.get("api_token") or "").strip())
+    keep_or_update("ADMIN_USER", str(form.get("admin_user") or "admin").strip() or "admin")
+    update_if_present("ADMIN_PASS", str(form.get("admin_pass") or "").strip())
+
+    keep_or_update("PANEL_SCHEME", str(form.get("panel_scheme") or "https").strip())
+    keep_or_update("PANEL_HOST", str(form.get("panel_host") or "").strip())
+    keep_or_update("PANEL_PORT", str(form.get("panel_port") or "2053").strip())
+    keep_or_update("PANEL_BASE_PATH", str(form.get("panel_base_path") or "/").strip())
+    keep_or_update("PANEL_USERNAME", str(form.get("panel_username") or "admin").strip())
+    update_if_present("PANEL_PASSWORD", str(form.get("panel_password") or "").strip())
+    keep_or_update("PANEL_2FA", str(form.get("panel_2fa") or "").strip())
+    keep_or_update("PANEL_VERIFY_TLS", "true" if form.get("panel_verify_tls") else "false")
+
+    keep_or_update("INBOUND_ID", str(form.get("inbound_id") or "1").strip())
+    keep_or_update("VLESS_HOST", str(form.get("vless_host") or "").strip())
+    keep_or_update("DEFAULT_FLOW", str(form.get("default_flow") or "xtls-rprx-vision").strip())
+    keep_or_update("DEFAULT_FINGERPRINT", str(form.get("default_fingerprint") or "random").strip())
+    keep_or_update("DEFAULT_ALPN", str(form.get("default_alpn") or "").strip())
+    keep_or_update("REQUEST_TIMEOUT", str(form.get("request_timeout") or "10").strip())
+    keep_or_update("DISABLE_DB", "true" if form.get("disable_db") else "false")
+
+    _write_env_file(existing)
+    global _PANEL_SERVERS
+    _PANEL_SERVERS = None
+    return RedirectResponse(url="/admin/settings", status_code=303)
 
 
 @app.get("/admin/servers/ssh", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
@@ -890,9 +1649,13 @@ async def admin_servers_ssh_status(job_id: str) -> Dict[str, Any]:
 
 
 @app.get("/admin/payments", response_class=HTMLResponse, dependencies=[Depends(_admin_auth)])
-async def admin_payments(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
-    payments = (await db.execute(select(PaymentEvent).order_by(desc(PaymentEvent.id)).limit(500))).scalars().all()
-    subs = (await db.execute(select(Subscription))).scalars().all()
+async def admin_payments(request: Request, db: Optional[AsyncSession] = Depends(get_db)) -> HTMLResponse:
+    if db is None:
+        payments = []
+        subs = []
+    else:
+        payments = (await db.execute(select(PaymentEvent).order_by(desc(PaymentEvent.id)).limit(500))).scalars().all()
+        subs = (await db.execute(select(Subscription))).scalars().all()
     subs_map = {sub.tg_id: sub for sub in subs}
     return _render_template(
         request,

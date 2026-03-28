@@ -2,6 +2,7 @@
 {% set title = "Servers" %}
 {% set page_title = "Серверы" %}
 {% set active = "servers" %}
+{% set page_icon = "🖥️" %}
 
 {% block content %}
   <div class="banner">
@@ -10,28 +11,28 @@
     <div class="button-row">
       <a class="btn secondary" href="/admin/servers/config">Редактировать JSON</a>
       <a class="btn secondary" href="/admin/servers/ssh">Установить через SSH</a>
-      <a class="btn" href="/admin/servers/config">Добавить сервер</a>
+      <a class="btn" href="/admin/servers/new">Добавить сервер</a>
     </div>
   </div>
 
   <div class="grid" style="margin-bottom:18px;">
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon blue">T</div>
+        <div class="stat-icon blue">🧩</div>
         <div class="muted">Всего серверов</div>
       </div>
       <div class="stat-value">{{ total_servers }}</div>
     </div>
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon green">A</div>
+        <div class="stat-icon green">✅</div>
         <div class="muted">Активны</div>
       </div>
       <div class="stat-value">{{ active_servers }}</div>
     </div>
     <div class="card">
       <div class="stat-head">
-        <div class="stat-icon purple">O</div>
+        <div class="stat-icon purple">📈</div>
         <div class="muted">Онлайн пользователей</div>
       </div>
       <div class="stat-value">{{ online_total }}</div>
@@ -39,12 +40,12 @@
   </div>
 
   {% if not servers_configured %}
-    <div class="empty-state">Серверы не настроены. Добавьте их через `PANEL_SERVERS_JSON` или одиночные `PANEL_*` параметры.</div>
+    <div class="empty-state">Серверы не настроены. Добавьте их через кнопку “Добавить сервер”.</div>
   {% endif %}
 
   <div class="server-grid">
     {% for s in servers %}
-      <div class="server-card">
+      <div class="server-card" data-server-id="{{ s.id }}">
         <div class="stat-head">
           <div>
             <strong>{{ s.name }}</strong>
@@ -53,8 +54,16 @@
           <span class="badge">{{ s.host }}:{{ s.port }}</span>
         </div>
         <div class="muted" style="margin-bottom:10px;">
-          <span class="status {{ 'ok' if s.ok else 'err' }}">{{ "Работает" if s.ok else "Ошибка" }}</span>
-          <span style="margin-left:8px;">Онлайн: {{ s.onlines_count }}</span>
+          <span class="status {{ 'ok' if s.ok else 'err' }} stat-status">{{ "Работает" if s.ok else "Ошибка" }}</span>
+          <span class="stat-online" style="margin-left:8px;">Онлайн: {{ s.onlines_count }}</span>
+          <span class="stat-ping" style="margin-left:8px;">Ping: {{ s.ping_ms if s.ping_ms is not none else "-" }} ms</span>
+        </div>
+        <div class="muted stat-metrics" style="display:flex; flex-wrap:wrap; gap:10px; font-size:12px; margin-bottom:10px;">
+          <span class="stat-cpu">CPU: {{ s.cpu if s.cpu is not none else "-" }}%</span>
+          <span class="stat-ram">RAM: {{ s.ram if s.ram is not none else "-" }}%</span>
+          <span class="stat-disk">Диск: {{ s.disk if s.disk is not none else "-" }}%</span>
+          <span class="stat-up">↑ {{ s.up if s.up else "-" }}</span>
+          <span class="stat-down">↓ {{ s.down if s.down else "-" }}</span>
         </div>
         {% if not s.ok %}
           <div class="muted" style="font-size:12px;">Ошибка подключения.</div>
@@ -62,6 +71,12 @@
             <summary class="muted" style="cursor:pointer;">Показать детали</summary>
             <div class="muted" style="font-size:12px;">{{ s.error }}</div>
           </details>
+          <div style="margin-top:10px;">
+            <a class="btn secondary" href="/admin/servers/edit/{{ s.id }}">Редактировать</a>
+            <form method="post" action="/admin/servers/delete/{{ s.id }}" style="display:inline;" onsubmit="return confirm('Удалить сервер?');">
+              <button class="btn secondary" type="submit">Удалить</button>
+            </form>
+          </div>
         {% else %}
           <table>
             <thead>
@@ -93,9 +108,52 @@
           </table>
           <div style="margin-top:10px;">
             <a class="btn secondary" href="{{ s.panel_url }}" target="_blank">Перейти в панель</a>
+            <a class="btn secondary" href="/admin/servers/edit/{{ s.id }}">Редактировать</a>
+            <form method="post" action="/admin/servers/delete/{{ s.id }}" style="display:inline;" onsubmit="return confirm('Удалить сервер?');">
+              <button class="btn secondary" type="submit">Удалить</button>
+            </form>
           </div>
         {% endif %}
       </div>
     {% endfor %}
   </div>
+
+  <script>
+    const fmt = (value) => (value === null || value === undefined ? "-" : value);
+    const pct = (value) => (value === null || value === undefined ? "-" : `${value}%`);
+    async function refreshStats() {
+      try {
+        const res = await fetch("/admin/servers/status", { cache: "no-store" });
+        const data = await res.json();
+        (data.items || []).forEach((item) => {
+          const card = document.querySelector(`[data-server-id="${item.id}"]`);
+          if (!card) return;
+          const statusEl = card.querySelector(".stat-status");
+          if (statusEl) {
+            statusEl.textContent = item.ok ? "Работает" : "Ошибка";
+            statusEl.classList.toggle("ok", !!item.ok);
+            statusEl.classList.toggle("err", !item.ok);
+          }
+          const onlineEl = card.querySelector(".stat-online");
+          if (onlineEl) onlineEl.textContent = `Онлайн: ${fmt(item.onlines_count)}`;
+          const pingEl = card.querySelector(".stat-ping");
+          if (pingEl) pingEl.textContent = `Ping: ${fmt(item.ping_ms)} ms`;
+          const cpuEl = card.querySelector(".stat-cpu");
+          if (cpuEl) cpuEl.textContent = `CPU: ${pct(item.cpu)}`;
+          const ramEl = card.querySelector(".stat-ram");
+          if (ramEl) ramEl.textContent = `RAM: ${pct(item.ram)}`;
+          const diskEl = card.querySelector(".stat-disk");
+          if (diskEl) diskEl.textContent = `Диск: ${pct(item.disk)}`;
+          const upEl = card.querySelector(".stat-up");
+          if (upEl) upEl.textContent = `↑ ${fmt(item.up)}`;
+          const downEl = card.querySelector(".stat-down");
+          if (downEl) downEl.textContent = `↓ ${fmt(item.down)}`;
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    refreshStats();
+    setInterval(refreshStats, 4000);
+  </script>
 {% endblock %}
