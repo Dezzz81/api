@@ -368,19 +368,26 @@ def _build_server_url(server: PanelServer, path: str) -> str:
 
 
 async def _xui_login(client: httpx.AsyncClient, server: PanelServer) -> None:
-    login_url = _build_server_url(server, "/login/")
     login_data = {"username": server.username, "password": server.password}
     if server.twofa:
         login_data["twoFactorCode"] = server.twofa
-    resp = await client.post(login_url, data=login_data)
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"3x-ui login failed (HTTP {resp.status_code})")
-    try:
-        data = resp.json()
-        if data.get("success") is False:
-            raise HTTPException(status_code=502, detail="3x-ui login failed")
-    except Exception:
-        pass
+    last_status: Optional[int] = None
+    for path in ("/login", "/login/"):
+        login_url = _build_server_url(server, path)
+        resp = await client.post(login_url, data=login_data)
+        last_status = resp.status_code
+        if resp.status_code == 404:
+            continue
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"3x-ui login failed (HTTP {resp.status_code})")
+        try:
+            data = resp.json()
+            if data.get("success") is False:
+                raise HTTPException(status_code=502, detail="3x-ui login failed")
+        except Exception:
+            pass
+        return
+    raise HTTPException(status_code=502, detail=f"3x-ui login failed (HTTP {last_status})")
 
 
 async def _xui_add_client(client: httpx.AsyncClient, server: PanelServer, payload: Dict[str, Any]) -> None:
@@ -399,7 +406,11 @@ async def _xui_get_inbound(
     resp = await client.get(url)
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"3x-ui inbound get failed (HTTP {resp.status_code})")
-    return resp.json().get("obj") or {}
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="3x-ui inbound get failed (invalid JSON)")
+    return data.get("obj") or {}
 
 
 async def _xui_list_inbounds(client: httpx.AsyncClient, server: PanelServer) -> List[Dict[str, Any]]:
@@ -407,7 +418,11 @@ async def _xui_list_inbounds(client: httpx.AsyncClient, server: PanelServer) -> 
     resp = await client.get(url)
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"3x-ui inbounds list failed (HTTP {resp.status_code})")
-    return resp.json().get("obj") or []
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="3x-ui inbounds list failed (invalid JSON)")
+    return data.get("obj") or []
 
 
 async def _xui_get_onlines(client: httpx.AsyncClient, server: PanelServer) -> List[str]:
@@ -415,7 +430,11 @@ async def _xui_get_onlines(client: httpx.AsyncClient, server: PanelServer) -> Li
     resp = await client.post(url)
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"3x-ui onlines failed (HTTP {resp.status_code})")
-    return resp.json().get("obj") or []
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="3x-ui onlines failed (invalid JSON)")
+    return data.get("obj") or []
 
 
 def _parse_json_maybe(value: Any) -> Dict[str, Any]:
@@ -427,6 +446,39 @@ def _parse_json_maybe(value: Any) -> Dict[str, Any]:
         except Exception:
             return {}
     return {}
+
+
+def _extract_inbound_reality(inbound_obj: Dict[str, Any]) -> Dict[str, Any]:
+    stream_settings = _parse_json_maybe(
+        inbound_obj.get("streamSettings") or inbound_obj.get("stream_settings")
+    )
+    tls_settings = _parse_json_maybe(
+        stream_settings.get("tlsSettings") or inbound_obj.get("tlsSettings")
+    )
+    reality_settings = _parse_json_maybe(
+        stream_settings.get("realitySettings")
+        or tls_settings.get("realitySettings")
+        or inbound_obj.get("realitySettings")
+    )
+    reality_inner = _parse_json_maybe(
+        reality_settings.get("settings") or tls_settings.get("settings")
+    )
+    security = (
+        stream_settings.get("security")
+        or tls_settings.get("security")
+        or inbound_obj.get("security")
+        or ""
+    )
+    security = str(security).strip().lower()
+    has_reality = bool(reality_settings) or bool(reality_inner)
+    return {
+        "stream_settings": stream_settings,
+        "tls_settings": tls_settings,
+        "reality_settings": reality_settings,
+        "reality_inner": reality_inner,
+        "security": security,
+        "has_reality": has_reality,
+    }
 
 
 def _extract_alpn(*sources: Dict[str, Any]) -> str:
@@ -996,19 +1048,25 @@ async def create_client(
         follow_redirects=True,
     ) as client:
         await _xui_login(client, server)
-        await _xui_add_client(client, server, add_client_data)
         inbound_obj = await _xui_get_inbound(client, server, inbound_id)
+        inbound_meta = _extract_inbound_reality(inbound_obj)
+        stream_settings = inbound_meta["stream_settings"]
+        tls_settings = inbound_meta["tls_settings"]
+        reality_settings = inbound_meta["reality_settings"]
+        reality_inner = inbound_meta["reality_inner"]
+        security = inbound_meta["security"]
+        has_reality = inbound_meta["has_reality"]
+        if security != "reality" and not has_reality:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Inbound security is not set to reality (security={security or 'missing'})",
+            )
+        await _xui_add_client(client, server, add_client_data)
 
-    stream_settings = _parse_json_maybe(inbound_obj.get("streamSettings"))
-    reality_settings = _parse_json_maybe(stream_settings.get("realitySettings"))
-    reality_inner = _parse_json_maybe(reality_settings.get("settings"))
-
-    security = stream_settings.get("security")
-    has_reality = bool(reality_settings) or bool(reality_inner)
     if security != "reality" and not has_reality:
         raise HTTPException(
             status_code=500,
-            detail="Inbound security is not set to reality",
+            detail=f"Inbound security is not set to reality (security={security or 'missing'})",
         )
 
     server_names = reality_settings.get("serverNames") or []
@@ -1038,7 +1096,6 @@ async def create_client(
     spider_x = reality_inner.get("spiderX") or "/"
 
     network = stream_settings.get("network", "tcp")
-    tls_settings = _parse_json_maybe(stream_settings.get("tlsSettings"))
     alpn = _extract_alpn(reality_inner, reality_settings, stream_settings, tls_settings)
     tcp_settings = _parse_json_maybe(stream_settings.get("tcpSettings"))
     header_type = _parse_json_maybe(tcp_settings.get("header")).get("type", "none")
@@ -1360,6 +1417,9 @@ async def admin_server_edit(request: Request, server_id: str) -> HTMLResponse:
             await _xui_login(client, server_obj)
             inbound = await _xui_get_inbound(client, server_obj, int(server_obj.inbound_id or 0))
             stats = await _xui_get_server_stats(client, server_obj)
+        inbound_meta = _extract_inbound_reality(inbound)
+        security = inbound_meta["security"]
+        has_reality = inbound_meta["has_reality"]
         panel_info = {
             "protocol": inbound.get("protocol"),
             "port": inbound.get("port"),
@@ -1368,6 +1428,8 @@ async def admin_server_edit(request: Request, server_id: str) -> HTMLResponse:
             "up": inbound.get("up"),
             "down": inbound.get("down"),
             "total": inbound.get("total"),
+            "security": security,
+            "has_reality": has_reality,
             "cpu": stats.get("cpu"),
             "ram": stats.get("ram"),
             "mem_used": stats.get("mem_used"),
