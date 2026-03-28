@@ -6,6 +6,19 @@ cd "$SCRIPT_DIR"
 
 mkdir -p "$SCRIPT_DIR/logs"
 
+# Try to ensure DB is running before API starts (autostart path)
+if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+  if command -v docker >/dev/null 2>&1; then
+    docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d || docker-compose -f "$SCRIPT_DIR/docker-compose.yml" up -d || true
+  elif command -v systemctl >/dev/null 2>&1; then
+    systemctl start postgresql >/dev/null 2>&1 || true
+  elif command -v service >/dev/null 2>&1; then
+    service postgresql start >/dev/null 2>&1 || true
+  fi
+fi
+
+sleep 3
+
 if [[ -f "$SCRIPT_DIR/venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/venv/bin/activate"

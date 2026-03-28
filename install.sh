@@ -44,6 +44,10 @@ source "venv/bin/activate"
 python -m pip install --upgrade pip
 python -m pip install -r "requirements.txt"
 
+if [[ -f "start.sh" ]]; then
+  chmod +x "start.sh"
+fi
+
 if [[ -f "docker-compose.yml" ]]; then
   if command -v docker >/dev/null 2>&1; then
     docker compose -f "docker-compose.yml" up -d || docker-compose -f "docker-compose.yml" up -d || true
@@ -83,7 +87,7 @@ WorkingDirectory=$SCRIPT_DIR
 EnvironmentFile=$SCRIPT_DIR/.env
 Environment=API_HOST=0.0.0.0
 Environment=API_PORT=8000
-ExecStart=$SCRIPT_DIR/venv/bin/python -m uvicorn app:app --host \$API_HOST --port \$API_PORT --log-level info --proxy-headers
+ExecStart=$SCRIPT_DIR/start.sh
 Restart=always
 RestartSec=5
 
