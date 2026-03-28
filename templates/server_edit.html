@@ -8,10 +8,14 @@
   <h2 class="section-title">{{ "Добавить сервер" if is_new else "Редактировать сервер" }}</h2>
   <div class="form-card">
     <form method="post" action="/admin/servers/save">
-      <input type="hidden" name="id" value="{{ server.id }}" />
       <div class="form-section">
         <div class="form-section-title">Основная информация</div>
         <div class="form-grid">
+          <div class="form-field">
+            <label>ID сервера (для API)</label>
+            <input type="text" name="id" value="{{ server.id }}" placeholder="srv1" {% if not is_new %}readonly{% endif %} />
+            <div class="help">Используй это значение в `server_id` при запросах API</div>
+          </div>
           <div class="form-field">
             <label>Название сервера (для админки)</label>
             <input type="text" name="name" value="{{ server.name }}" placeholder="SE Швеция" />
